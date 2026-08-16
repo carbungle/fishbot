@@ -43,7 +43,7 @@ import numpy as np
 import ctypes as _ctypes
 
 VERSION = "7"
-UPDATE_BASE = "https://raw.githubusercontent.com/USER/REPO/main"
+UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py"]
 
 
