@@ -4,14 +4,22 @@ import json
 import os
 import platform
 import sys
+import time
 import uuid
 
 OWNER_SALT_B64 = "rXtK880+lqjsohQ4547xCw=="
 OWNER_DIGEST_B64 = "pqjr3ydb5mM/qOjeS4jiibY0jn7p0SKJS3yy0hr5Cjo="
+OWNER_KDF = "pbkdf2"
 
 _XOR_KEY = base64.b64decode("ctYMkmwodUo/DIwsd6C80oF6k+TPkXmledes+0x1joA=")
 _ITER = 250000
+_SCRYPT_N = 2 ** 18
+_SCRYPT_R = 8
+_SCRYPT_P = 1
+_SCRYPT_DKLEN = 64
 _MAGIC = b"AUTH1"
+
+_SESSION_TTL = 7 * 24 * 3600  # re-auth required once per week
 
 _OWNER_HW = "Q7dv8whNTSxeOOoZFZPf57JDoNSsohqRQbScmClA7OIW4DuhWBhGc1w/uBREmIrrsk+mh6uhGpNBs8jNLkK5tA=="
 
@@ -62,6 +70,44 @@ def _pbkdf2(secret: bytes, salt: bytes) -> bytes:
     return hashlib.pbkdf2_hmac("sha256", secret, salt, _ITER)
 
 
+def _scrypt(secret: str, salt: bytes) -> bytes:
+    return hashlib.scrypt(secret.encode("utf-8"), salt=salt, n=_SCRYPT_N,
+                          r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
+                          maxmem=1 << 30)
+
+
+def _derive(secret: str, salt: bytes, kdf: str) -> bytes:
+    if kdf == "scrypt":
+        return _scrypt(secret, salt)
+    return _pbkdf2(secret, salt)
+
+
+def _b64(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
+
+
+def _owner_creds():
+    """Return (kdf, salt, digest) for the owner gate."""
+    p = os.path.join(_dir(), "owner.dat")
+    if os.path.exists(p):
+        try:
+            with open(p, "rb") as f:
+                d = json.loads(_mask(base64.b64decode(f.read())).decode("utf-8"))
+            return "scrypt", base64.b64decode(d["salt"]), base64.b64decode(d["digest"])
+        except Exception:
+            pass
+    return OWNER_KDF, base64.b64decode(OWNER_SALT_B64), base64.b64decode(OWNER_DIGEST_B64)
+
+
+def _bake_owner(pw: str) -> None:
+    salt = os.urandom(16)
+    payload = json.dumps({"salt": _b64(salt),
+                          "digest": _b64(_scrypt(pw, salt))},
+                         separators=(",", ":")).encode("utf-8")
+    with open(os.path.join(_dir(), "owner.dat"), "wb") as f:
+        f.write(base64.b64encode(_mask(payload)))
+
+
 def _mask(data: bytes) -> bytes:
     out = bytearray(len(data))
     k = len(_XOR_KEY)
@@ -103,15 +149,15 @@ def has_users() -> bool:
 
 
 def _verify_owner(owner_pw: str) -> bool:
-    return _pbkdf2(owner_pw, base64.b64decode(OWNER_SALT_B64)) == \
-        base64.b64decode(OWNER_DIGEST_B64)
+    kdf, salt, digest = _owner_creds()
+    return _derive(owner_pw, salt, kdf) == digest
 
 
 def _find_user(name: str, records: list):
-    name_b = name.encode("utf-8")
     for rec in records:
         salt = base64.b64decode(rec["salt"])
-        if base64.b64encode(_pbkdf2(name_b, salt)).decode("ascii") == rec["nd"]:
+        kdf = rec.get("kdf", "pbkdf2")
+        if base64.b64encode(_derive(name, salt, kdf)).decode("ascii") == rec["nd"]:
             return rec
     return None
 
@@ -122,9 +168,9 @@ def add_user(owner_pw: str, username: str, password: str) -> bool:
     records = _load()
     salt = os.urandom(16)
     rec = {"salt": base64.b64encode(salt).decode("ascii"),
-           "nd": base64.b64encode(_pbkdf2(username, salt)).decode("ascii"),
-           "pd": base64.b64encode(_pbkdf2(password, salt)).decode("ascii"),
-           "hw": ""}
+           "nd": base64.b64encode(_scrypt(username, salt)).decode("ascii"),
+           "pd": base64.b64encode(_scrypt(password, salt)).decode("ascii"),
+           "hw": "", "kdf": "scrypt"}
     old = _find_user(username, records)
     if old is not None:
         records[records.index(old)] = rec
@@ -182,23 +228,32 @@ def _pass_prompt(prompt: str) -> str:
 def _save_session(username: str) -> None:
     p = _session_path()
     try:
+        blob = json.dumps({"u": username, "t": int(time.time())},
+                          separators=(",", ":")).encode("utf-8")
         with open(p, "wb") as f:
-            f.write(base64.b64encode(_mask(username.encode("utf-8"))))
+            f.write(base64.b64encode(_mask(blob)))
     except Exception:
         pass
 
 
-def _load_session() -> str:
+def _load_session():
+    """Return (username, epoch_time) or ("", 0) if none/expired format."""
     try:
         with open(_session_path(), "rb") as f:
-            return _mask(base64.b64decode(f.read())).decode("utf-8")
+            data = json.loads(_mask(base64.b64decode(f.read())).decode("utf-8"))
+        if isinstance(data, dict) and "u" in data and "t" in data:
+            return str(data["u"]), int(data["t"])
+        if isinstance(data, str):
+            return data, 0  # legacy session, force re-auth
     except Exception:
-        return ""
+        pass
+    return "", 0
 
 
 def _password_ok(rec: dict, pw: str) -> bool:
     salt = base64.b64decode(rec["salt"])
-    return base64.b64encode(_pbkdf2(pw, salt)).decode("ascii") == rec["pd"]
+    kdf = rec.get("kdf", "pbkdf2")
+    return base64.b64encode(_derive(pw, salt, kdf)).decode("ascii") == rec["pd"]
 
 
 def _masked_hw() -> str:
@@ -215,27 +270,41 @@ def login():
         print("No registered users. Contact the owner.")
         return None
     cur = _masked_hw()
-    owner_pc = _is_owner_pc()
 
     def persist(rec):
         rec["hw"] = cur
         _save(records)
 
-    session = _load_session()
-    if session:
-        rec = _find_user(session, records)
+    def upgrade(rec, name, pw):
+        if rec.get("kdf", "pbkdf2") != "scrypt":
+            salt = os.urandom(16)
+            rec["kdf"] = "scrypt"
+            rec["salt"] = base64.b64encode(salt).decode("ascii")
+            rec["nd"] = base64.b64encode(_scrypt(name, salt)).decode("ascii")
+            rec["pd"] = base64.b64encode(_scrypt(pw, salt)).decode("ascii")
+            _save(records)
+
+    def refresh(name):
+        _save_session(name)
+
+    sess_name, sess_ts = _load_session()
+    if sess_name:
+        rec = _find_user(sess_name, records)
         if rec is not None and rec.get("hw", "") == cur:
-            print('Welcome, "%s".' % session)
+            if time.time() - sess_ts < _SESSION_TTL:
+                print('Welcome, "%s".' % sess_name)
+                return sess_name
+            print('Welcome back, "%s". Password required (weekly).' % sess_name)
             while True:
                 try:
                     pw = _pass_prompt("Password: ")
                 except (EOFError, KeyboardInterrupt):
                     print()
                     return None
-                if pw == "" and owner_pc:
-                    break
                 if _password_ok(rec, pw):
-                    return session
+                    upgrade(rec, sess_name, pw)
+                    refresh(sess_name)
+                    return sess_name
                 print("Try again.")
 
     while True:
@@ -265,7 +334,8 @@ def login():
             continue
         if not hw:
             persist(rec)
-        _save_session(name)
+        upgrade(rec, name, pw)
+        refresh(name)
         return name
 
 
@@ -281,45 +351,82 @@ def unlock_user(owner_pw: str, username: str) -> bool:
     return True
 
 
+def export_user(owner_pw: str, username: str, password: str, out_path: str) -> bool:
+    """Write a single-user users.dat (scrypt, unbounded) to out_path. Owner-only."""
+    if not _verify_owner(owner_pw):
+        return False
+    salt = os.urandom(16)
+    rec = {"salt": base64.b64encode(salt).decode("ascii"),
+           "nd": base64.b64encode(_scrypt(username, salt)).decode("ascii"),
+           "pd": base64.b64encode(_scrypt(password, salt)).decode("ascii"),
+           "hw": "", "kdf": "scrypt"}
+    try:
+        with open(out_path, "wb") as f:
+            f.write(_encode([rec]))
+        return True
+    except Exception:
+        return False
+
+
 def main():
     if not sys.argv[1:]:
-        print("add | remove | unlock")
+        print("add | remove | unlock | export <user> <out.dat>")
         return None
     owner = input("Owner password: ")
     cmd = sys.argv[1].lower()
+
+    def _owner_ok() -> bool:
+        if not _verify_owner(owner):
+            return False
+        # Upgrade the owner gate to the hardened scrypt hash on first success.
+        if not os.path.exists(os.path.join(_dir(), "owner.dat")):
+            _bake_owner(owner)
+        return True
+
     if cmd == "add":
         u = input("Username: ").strip()
         if not u:
             print("no username")
             return None
+        if not _owner_ok():
+            print("Wrong owner password.")
+            return None
         p = input("Password: ")
-        print("Added." if add_user(owner, u, p) else "Wrong owner password.")
+        print("Added." if add_user(owner, u, p) else "Failed.")
         return None
     if cmd == "remove":
         u = input("Username: ").strip()
         if not u:
             print("no username")
             return None
-        if remove_user(owner, u):
-            print("Removed.")
-        elif _verify_owner(owner):
-            print("No such user.")
-        else:
+        if not _owner_ok():
             print("Wrong owner password.")
+            return None
+        print("Removed." if remove_user(owner, u) else "No such user.")
         return None
     if cmd == "unlock":
         u = input("Username: ").strip()
         if not u:
             print("no username")
             return None
-        if unlock_user(owner, u):
-            print("Unlocked.")
-        elif _verify_owner(owner):
-            print("No such user.")
-        else:
+        if not _owner_ok():
             print("Wrong owner password.")
+            return None
+        print("Unlocked." if unlock_user(owner, u) else "No such user.")
         return None
-    print("add | remove | unlock")
+    if cmd == "export":
+        if len(sys.argv) < 4:
+            print("usage: python auth.py export <username> <out.dat>")
+            return None
+        u = sys.argv[2]
+        out = sys.argv[3]
+        if not _owner_ok():
+            print("Wrong owner password.")
+            return None
+        p = input("Password for %s: " % u)
+        print("Exported." if export_user(owner, u, p, out) else "Export failed.")
+        return None
+    print("add | remove | unlock | export <user> <out.dat>")
     return None
 
 
