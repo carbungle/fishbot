@@ -1,0 +1,8 @@
+users.dat
+session.dat
+cfg.json
+cfg.txt
+fish_counter.txt
+*.pyc
+__pycache__/
+*.new
