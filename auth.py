@@ -297,7 +297,7 @@ def login():
             print('Welcome back, "%s". Password required (weekly).' % sess_name)
             while True:
                 try:
-                    pw = _pass_prompt("Password: ")
+                    pw = _pass_prompt("?? ")
                 except (EOFError, KeyboardInterrupt):
                     print()
                     return None
@@ -309,7 +309,7 @@ def login():
 
     while True:
         try:
-            name = input("Username: ").strip()
+            name = input("? ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return None
@@ -321,7 +321,7 @@ def login():
             continue
         while True:
             try:
-                pw = _pass_prompt("Password: ")
+                pw = _pass_prompt("?? ")
             except (EOFError, KeyboardInterrupt):
                 print()
                 return None
@@ -372,7 +372,7 @@ def main():
     if not sys.argv[1:]:
         print("add | remove | unlock | export <user> <out.dat>")
         return None
-    owner = input("Owner password: ")
+    owner = input("?? ")
     cmd = sys.argv[1].lower()
 
     def _owner_ok() -> bool:
@@ -384,18 +384,18 @@ def main():
         return True
 
     if cmd == "add":
-        u = input("Username: ").strip()
+        u = input("? ").strip()
         if not u:
             print("no username")
             return None
         if not _owner_ok():
             print("Wrong owner password.")
             return None
-        p = input("Password: ")
+        p = input("?? ")
         print("Added." if add_user(owner, u, p) else "Failed.")
         return None
     if cmd == "remove":
-        u = input("Username: ").strip()
+        u = input("? ").strip()
         if not u:
             print("no username")
             return None
@@ -405,7 +405,7 @@ def main():
         print("Removed." if remove_user(owner, u) else "No such user.")
         return None
     if cmd == "unlock":
-        u = input("Username: ").strip()
+        u = input("? ").strip()
         if not u:
             print("no username")
             return None
@@ -423,7 +423,7 @@ def main():
         if not _owner_ok():
             print("Wrong owner password.")
             return None
-        p = input("Password for %s: " % u)
+        p = input("?? ")
         print("Exported." if export_user(owner, u, p, out) else "Export failed.")
         return None
     print("add | remove | unlock | export <user> <out.dat>")
