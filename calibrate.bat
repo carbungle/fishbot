@@ -9,12 +9,7 @@ echo.
 python main.py --calibrate
 if errorlevel 1 goto :error
 echo.
-echo Step 2: Water cast spot (click 1 spot)
-echo.
-python main.py --set-cast
-if errorlevel 1 goto :error
-echo.
-echo Step 3 (optional): status TEXT region (click 2 corners)
+echo Step 2 (optional): status TEXT region (click 2 corners)
 echo   Press Enter to do it, or type "skip" to skip.
 set /p ans="Run text calibration [Enter/skip]: "
 if /i "%ans%"=="skip" goto :color
@@ -22,7 +17,7 @@ python main.py --set-text
 if errorlevel 1 goto :error
 :color
 echo.
-echo Step 4 (optional): COLOUR region that turns a different colour
+echo Step 3 (optional): COLOUR region that turns a different colour
 echo   This adds the 5-second release. Press Enter to do it,
 echo   or type "skip" to skip.
 set /p ans2="Run colour calibration [Enter/skip]: "
