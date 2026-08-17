@@ -42,7 +42,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "9"
+VERSION = "10"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py"]
 

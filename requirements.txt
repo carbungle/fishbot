@@ -2,3 +2,4 @@ mss==10.0.0
 numpy==2.2.6
 pynput==1.7.7
 opencv-python==4.11.0.86
+pyautoit==0.6.5
