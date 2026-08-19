@@ -25,6 +25,7 @@ Run:
 
 Controls (pynput global hotkeys):
     F8    - toggle auto-fishing on/off
+    F1    - switch mode: NORMAL (1) / BOX (2, box + maintenance cycle)
     ESC   - quit
 """
 
@@ -42,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "10"
+VERSION = "11"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py"]
 
@@ -211,6 +212,22 @@ class Config:
     # water spot captured on F8.
     seq_every_n_catches: int = 3
     seq_locations: list = field(default_factory=list)   # 4 absolute (x,y)
+
+    # --- Mode 2 (F1 toggle: "box + maintenance") -----------------------------
+    # Every mode2_store_every_n_catches catches: store in the trunk (F +
+    # 4-spot sequence using mode2_store_locations).  Every
+    # mode2_every_n_catches catches, run the maintenance cycle:
+    #   press 2, hold left click mode2_hold_seconds, press 2 again,
+    #   press F + click the first 6 mode2_seq_locations, press T + click the
+    #   7th, press 2 again, return to the water spot, click once (throw the
+    #   box out), press 1, click again to continue.
+    # Startup also throws the box: click once, press 1, click again.
+    mode2_every_n_catches: int = 15
+    mode2_store_every_n_catches: int = 2
+    mode2_store_every_n_catches: int = 2
+    mode2_hold_seconds: float = 20.0
+    mode2_seq_locations: list = field(default_factory=list)  # 7 absolute (x,y)
+    mode2_store_locations: list = field(default_factory=list)  # 4 absolute (x,y)
 
     # --- Debug --------------------------------------------------------------
     preview: bool = False
@@ -661,12 +678,22 @@ class AutoFisher:
         self.hold_start: Optional[float] = None
         self.water_spot: Optional[Tuple[int, int]] = None  # captured on start
         self.total_caught = load_total_caught()   # all-time persistent count
+        self.mode = "normal"            # "normal" or "box" (F1 toggles)
+        self.mode2_startup_done = False  # box-throw done at start of a run
 
     def on_press_key(self, key):
         try:
             name = key.name
         except AttributeError:
             name = key.char
+        if name == "f1":
+            now = time.time()
+            if getattr(self, "_last_f1", 0.0) and now - self._last_f1 < 0.5:
+                return name  # debounce
+            self._last_f1 = now
+            self.mode = "box" if self.mode != "box" else "normal"
+            _info("Mode: %s" % ("BOX (2)" if self.mode == "box" else "NORMAL (1)"))
+            return name
         if name == "f8":
             now = time.time()
             if getattr(self, "_last_f8", 0.0) and now - self._last_f8 < 0.5:
@@ -679,15 +706,17 @@ class AutoFisher:
                 self.end_frames = 0
                 self.caught = 0
                 self.water_spot = self.mouse.position()   # session water spot
+                self.mode2_startup_done = False
                 self.menu_det.reset()
                 self.watcher.reset()
                 self.color_watcher.reset()
-                _running_msg("RUNNING")
+                _running_msg("RUNNING (%s)" % ("MODE 2" if self.mode == "box" else "MODE 1"))
             else:
                 self.state = "idle"
                 self.menu_frames = 0
                 self.end_frames = 0
                 self.water_spot = None                     # new spot next time
+                self.mode2_startup_done = False
                 self.mouse.release()   # fully let go
                 _stopped_msg("STOPPED")
                 print(f"  Fish caught this run: {self.caught}")
@@ -742,6 +771,13 @@ class AutoFisher:
         frame = self.cap.grab()
 
         if self.state == "idle":
+            if self.mode == "box" and not self.mode2_startup_done:
+                self._mode2_throw_box()
+                self.mode2_startup_done = True
+                # The final click of the throw-box already continues fishing
+                # (that click IS the cast), so enter "waiting" directly.
+                self._mode2_enter_waiting()
+                return self.state
             self.start_casting()
             return self.state
 
@@ -803,17 +839,89 @@ class AutoFisher:
     def _finish_catch(self):
         self.mouse.release()
         time.sleep(self.cfg.post_catch_pause)
-        if self.cfg.seq_locations and self.caught % self.cfg.seq_every_n_catches == 0:
+        if self.mode == "box":
+            # Store in the trunk every mode2_store_every_n_catches catches
+            # (mode 2's own F + 4-spot sequence, using mode2_store_locations).
+            if self.cfg.mode2_store_locations and \
+                    self.caught % self.cfg.mode2_store_every_n_catches == 0:
+                self.run_post_catch_sequence(use_seq2=True)
+            # Big maintenance cycle every mode2_every_n_catches catches.
+            if self.cfg.mode2_seq_locations and \
+                    self.caught % self.cfg.mode2_every_n_catches == 0:
+                self._mode2_maintenance()
+                # Maintenance ends with the throw-box + press 1 + click, and
+                # that final click already continues fishing, so do not cast
+                # again on top of it.
+                self.total_caught += 1
+                if not self.cfg.demo:
+                    save_total_caught(self.total_caught)
+                self._mode2_enter_waiting()
+                return
+        elif self.cfg.seq_locations and self.caught % self.cfg.seq_every_n_catches == 0:
             self.run_post_catch_sequence()
         self.total_caught += 1
         if not self.cfg.demo:
             save_total_caught(self.total_caught)
         self.start_casting()
 
-    def run_post_catch_sequence(self):
+    def _mode2_enter_waiting(self):
+        self.state = "waiting"
+        self.menu_frames = 0
+        self.cast_time = time.time()
+        self.menu_det.reset()
+
+    def _mode2_throw_box(self):
+        """Startup (and after maintenance): click once to throw the box out,
+        press 1, then click in the same spot to keep fishing."""
+        print("Mode 2: throwing box...")
+        self.mouse.click_pos()
+        time.sleep(0.4)
+        self.mouse.press_key("1")
+        time.sleep(0.3)
+        self.mouse.click_pos()
+        time.sleep(0.4)
+
+    def _mode2_maintenance(self):
+        """Every N catches: press 2, hold left click mode2_hold_seconds,
+        press 2 again, press F + 6 spots, press T + 1 spot, press 2 again,
+        back to the water spot, throw the box, press 1, click again to
+        continue."""
+        locs = list(self.cfg.mode2_seq_locations)
+        if len(locs) < 7:
+            print("Mode-2 maintenance skipped (need 7 calibrated locations).")
+            return
+        print("Mode 2 maintenance: press 2, hold %ds..." % self.cfg.mode2_hold_seconds)
+        self.mouse.press_key("2")
+        time.sleep(0.3)
+        self.mouse.hold()
+        time.sleep(self.cfg.mode2_hold_seconds)
+        self.mouse.release()
+        time.sleep(0.3)
+        self.mouse.press_key("2")
+        time.sleep(0.3)
+        self.mouse.press_key("f")
+        time.sleep(0.3)
+        for x, y in locs[:6]:
+            self.mouse.click_at(x, y)
+            time.sleep(0.3)
+        self.mouse.press_key("t")
+        time.sleep(0.3)
+        x, y = locs[6]
+        self.mouse.click_at(x, y)
+        time.sleep(0.3)
+        self.mouse.press_key("2")
+        time.sleep(0.3)
+        if self.water_spot is not None:
+            self.mouse.move_to(*self.water_spot)
+            print("Back to water spot:", self.water_spot)
+            time.sleep(0.3)
+        self._mode2_throw_box()
+
+    def run_post_catch_sequence(self, use_seq2: bool = False):
         """After every N catches: press F, click the first 3 calibrated spots,
-        press T, click the 4th spot, then move back to the session water spot."""
-        locs = list(self.cfg.seq_locations)
+        press T, click the 4th spot, then move back to the session water spot.
+        use_seq2=True uses mode 2's own store locations (mode2_store_locations)."""
+        locs = list(self.cfg.mode2_store_locations if use_seq2 else self.cfg.seq_locations)
         if len(locs) < 4:
             print("Post-catch sequence skipped (need 4 calibrated locations).")
             return
@@ -889,6 +997,35 @@ def calibrate_seq_locations() -> list:
     return locs
 
 
+def calibrate_seq2_locations() -> list:
+    """Click 7 absolute screen locations in order for MODE 2:
+    1-6 are the F-key clicks, 7 is the T-key click."""
+    pts = _click_points(7, [
+        "Click LOCATION 1 (first of the 6 spots after pressing F).",
+        "Click LOCATION 2 (second of the 6 spots).",
+        "Click LOCATION 3 (third of the 6 spots).",
+        "Click LOCATION 4 (fourth of the 6 spots).",
+        "Click LOCATION 5 (fifth of the 6 spots).",
+        "Click LOCATION 6 (sixth of the 6 spots).",
+        "Click LOCATION 7 (the spot to click after pressing T)."])
+    locs = [(int(x), int(y)) for (x, y) in pts]
+    print(f"  Mode-2 sequence locations saved: {locs}")
+    return locs
+
+
+def calibrate_seq2_store_locations() -> list:
+    """Click 4 absolute screen locations in order for MODE 2's trunk store:
+    1-3 are the F-key clicks, 4 is the T-key click."""
+    pts = _click_points(4, [
+        "Click MODE-2 STORE LOCATION 1 (first of the 3 spots after pressing F).",
+        "Click MODE-2 STORE LOCATION 2 (second of the 3 spots).",
+        "Click MODE-2 STORE LOCATION 3 (third of the 3 spots).",
+        "Click MODE-2 STORE LOCATION 4 (the spot to click after pressing T)."])
+    locs = [(int(x), int(y)) for (x, y) in pts]
+    print(f"  Mode-2 store locations saved: {locs}")
+    return locs
+
+
 def calibrate_text(cfg: Config) -> Tuple[int, int, int, int]:
     (x0, y0), (x1, y1) = _click_points(
         2, ["Click the TOP-LEFT corner of the status TEXT on the menu.",
@@ -920,6 +1057,8 @@ def save_config(cfg: Config, path: str):
     data = {"region": cfg.region, "cast_pos": cfg.cast_pos,
             "text_region": cfg.text_region, "color_region": cfg.color_region,
             "seq_locations": cfg.seq_locations,
+            "mode2_seq_locations": cfg.mode2_seq_locations,
+            "mode2_store_locations": cfg.mode2_store_locations,
             "text_ref_images": cfg.text_ref_images}
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
@@ -937,6 +1076,10 @@ def load_config(cfg: Config, path: str):
         cfg.color_region = tuple(data["color_region"]) if data.get("color_region") else None
         cfg.seq_locations = [tuple(l) for l in data["seq_locations"]] \
             if data.get("seq_locations") else []
+        cfg.mode2_seq_locations = [tuple(l) for l in data["mode2_seq_locations"]] \
+            if data.get("mode2_seq_locations") else []
+        cfg.mode2_store_locations = [tuple(l) for l in data["mode2_store_locations"]] \
+            if data.get("mode2_store_locations") else []
         cfg.text_ref_images = data.get("text_ref_images") or {}
     except Exception as ex:
         print("Could not read cfg:", ex)
@@ -969,6 +1112,10 @@ def main():
                     help="click two corners of the colour-change region (alt mode)")
     ap.add_argument("--set-seq", action="store_true",
                     help="click 4 locations for the post-catch F/T sequence")
+    ap.add_argument("--set-seq2", action="store_true",
+                    help="click 7 locations for MODE 2 (6 F-key + 1 T-key)")
+    ap.add_argument("--set-seq2-store", action="store_true",
+                    help="click 4 locations for MODE 2's trunk store (3 F-key + 1 T-key)")
     ap.add_argument("--preview", action="store_true",
                     help="open a live preview window showing detected targets")
     ap.add_argument("--demo", action="store_true",
@@ -1016,6 +1163,16 @@ def main():
         cfg.seq_locations = calibrate_seq_locations()
         save_config(cfg, args.cfg)
         print(f"Sequence locations saved to {args.cfg}")
+        return
+    if args.set_seq2:
+        cfg.mode2_seq_locations = calibrate_seq2_locations()
+        save_config(cfg, args.cfg)
+        print(f"Mode-2 sequence locations saved to {args.cfg}")
+        return
+    if args.set_seq2_store:
+        cfg.mode2_store_locations = calibrate_seq2_store_locations()
+        save_config(cfg, args.cfg)
+        print(f"Mode-2 store locations saved to {args.cfg}")
         return
 
     if args.snap_text:
@@ -1066,7 +1223,7 @@ def main():
     lst.start()
 
     _info("Auto-fisher ready.")
-    _info("Hotkeys: F8 = toggle auto-fishing, ESC = quit.")
+    _info("Hotkeys: F8 = toggle auto-fishing, F1 = switch mode, ESC = quit.")
     _info("Fish counter: %d" % load_total_caught())
 
     if args.preview:

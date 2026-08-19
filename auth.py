@@ -19,8 +19,6 @@ _SCRYPT_P = 1
 _SCRYPT_DKLEN = 64
 _MAGIC = b"AUTH1"
 
-_SESSION_TTL = 7 * 24 * 3600  # re-auth required once per week
-
 _OWNER_HW = "Q7dv8whNTSxeOOoZFZPf57JDoNSsohqRQbScmClA7OIW4DuhWBhGc1w/uBREmIrrsk+mh6uhGpNBs8jNLkK5tA=="
 
 _gate = None
@@ -287,25 +285,11 @@ def login():
     def refresh(name):
         _save_session(name)
 
-    sess_name, sess_ts = _load_session()
+    sess_name, _ = _load_session()
     if sess_name:
         rec = _find_user(sess_name, records)
         if rec is not None and rec.get("hw", "") == cur:
-            if time.time() - sess_ts < _SESSION_TTL:
-                print('Welcome, "%s".' % sess_name)
-                return sess_name
-            print('Welcome back, "%s". Password required (weekly).' % sess_name)
-            while True:
-                try:
-                    pw = _pass_prompt("?? ")
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    return None
-                if _password_ok(rec, pw):
-                    upgrade(rec, sess_name, pw)
-                    refresh(sess_name)
-                    return sess_name
-                print("Try again.")
+            return sess_name
 
     while True:
         try:
