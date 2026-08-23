@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "12"
+VERSION = "11"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py"]
 
@@ -232,14 +232,6 @@ class Config:
     # --- Debug --------------------------------------------------------------
     preview: bool = False
     demo: bool = False
-
-    # --- Calibration reference frame ----------------------------------------
-    # The Roblox window rect (x, y, w, h) and DPI scale in effect when this
-    # cfg.json was calibrated.  At runtime the program re-detects the window
-    # and re-maps all stored coordinates so a calibration made on one PC
-    # (resolution / window size / position) also fits another.
-    ref_window: Optional[Tuple[int, int, int, int]] = None
-    ref_dpi: float = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -664,150 +656,6 @@ def focus_roblox():
     return False
 
 
-def set_dpi_aware():
-    """Tell Windows this process is DPI-aware so screen coordinates and
-    GetWindowRect report PHYSICAL pixels. Without this, Windows would
-    scale-coordinate requests on a >100% display and the auto-fit mapping
-    would be wrong."""
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)   # per-monitor aware
-    except Exception:
-        try:
-            ctypes.windll.user32.SetProcessDPIAware()
-        except Exception:
-            pass
-
-
-def dpi_scale() -> float:
-    """Current DPI scale factor (1.0 = 100%, 1.5 = 150%)."""
-    try:
-        return ctypes.windll.user32.GetDpiForSystem() / 96.0
-    except Exception:
-        return 1.0
-
-
-def find_roblox_rect():
-    """Return the Roblox window rect (left, top, width, height) in physical
-    pixels, or None if no Roblox window is visible."""
-    import ctypes
-    from ctypes import wintypes
-    try:
-        user32 = ctypes.windll.user32
-        rects = []
-        def _find(hwnd, lparam):
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            length = user32.GetWindowTextLengthW(hwnd)
-            if length > 0:
-                buf = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(hwnd, buf, length + 1)
-                if "roblox" in buf.value.lower():
-                    r = wintypes.RECT()
-                    if user32.GetWindowRect(hwnd, ctypes.byref(r)):
-                        rects.append((r.left, r.top, r.right - r.left,
-                                      r.bottom - r.top))
-            return True
-        user32.EnumWindows(
-            ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(_find), 0)
-        return rects[0] if rects else None
-    except Exception:
-        return None
-
-
-def _map_point(p, ref, cur):
-    """Map one absolute point from the calibration window rect `ref` to the
-    current window rect `cur` (proportional, per-axis)."""
-    if p is None:
-        return None
-    rx, ry, rw, rh = ref
-    cx, cy, cw, ch = cur
-    x, y = p
-    if rw <= 0 or rh <= 0:
-        return p
-    return (cx + (x - rx) * (cw / rw), cy + (y - ry) * (ch / rh))
-
-
-def _map_rect(r, ref, cur):
-    """Map a (x, y, w, h) absolute rect from `ref` to `cur`."""
-    if r is None:
-        return None
-    x, y, w, h = r
-    rx, ry, rw, rh = ref
-    cx, cy, cw, ch = cur
-    if rw <= 0 or rh <= 0:
-        return r
-    nx = cx + (x - rx) * (cw / rw)
-    ny = cy + (y - ry) * (ch / rh)
-    nw = w * (cw / rw)
-    nh = h * (ch / rh)
-    return (int(round(nx)), int(round(ny)), int(round(nw)), int(round(nh)))
-
-
-def _map_relative_rect(r, ref, cur):
-    """Map a (x, y, w, h) rect that is stored RELATIVE to cfg.region (as
-    text_region / color_region are): scale by the window size ratio only."""
-    if r is None:
-        return None
-    x, y, w, h = r
-    rx, ry, rw, rh = ref
-    cx, cy, cw, ch = cur
-    if rw <= 0 or rh <= 0:
-        return r
-    return (int(round(x * (cw / rw))), int(round(y * (ch / rh))),
-            int(round(w * (cw / rw))), int(round(h * (ch / rh))))
-
-
-def fit_calibration(cfg: "Config") -> bool:
-    """Re-map every stored screen coordinate from the calibration window
-    rect (cfg.ref_window) to the Roblox window that is visible right now.
-    Returns True if a fit was applied (or there was nothing to fit).
-    Prints warnings when the fit cannot be exact (DPI / aspect ratio /
-    window missing)."""
-    set_dpi_aware()
-    ref = cfg.ref_window
-    cur = find_roblox_rect()
-    if ref is None or len(ref) != 4:
-        print("Calibration has no reference window saved. "
-              "Re-run calibrate.bat on THIS PC for exact positions, or run "
-              "any calibration step once to stamp the window reference.")
-        return True   # nothing to fit; not an error for plain runs
-    if cur is None:
-        print("WARNING: could not find the Roblox window. Calibration will "
-              "not be auto-fitted and may click the wrong spots.")
-        return False
-
-    rx, ry, rw, rh = ref
-    cx, cy, cw, ch = cur
-    ref_aspect = rw / rh if rh else 0
-    cur_aspect = cw / ch if ch else 0
-    if abs(ref_aspect - cur_aspect) > 0.05:
-        print("WARNING: game window aspect ratio differs from calibration "
-              f"({ref_aspect:.2f} vs {cur_aspect:.2f}). Auto-fit is "
-              "proportional per axis, so positions may be slightly off.")
-    ref_dpi = cfg.ref_dpi
-    cur_dpi = dpi_scale()
-    if abs(ref_dpi - cur_dpi) > 0.05:
-        print("WARNING: Windows DPI scaling differs from calibration "
-              f"({int(round(ref_dpi*100))}% vs {int(round(cur_dpi*100))}%). "
-              "Coordinates are physical pixels, so clicks still map, but "
-              "small UI elements may shift.")
-
-    cfg.region = _map_rect(cfg.region, ref, cur)
-    cfg.cast_pos = _map_point(cfg.cast_pos, ref, cur)
-    cfg.seq_locations = [_map_point(p, ref, cur) for p in cfg.seq_locations]
-    cfg.mode2_seq_locations = [_map_point(p, ref, cur) for p in cfg.mode2_seq_locations]
-    cfg.mode2_store_locations = [_map_point(p, ref, cur) for p in cfg.mode2_store_locations]
-    cfg.text_region = _map_relative_rect(cfg.text_region, ref, cur)
-    cfg.color_region = _map_relative_rect(cfg.color_region, ref, cur)
-
-    if cfg.text_ref_images:
-        print("NOTE: saved text reference images were captured at the "
-              "calibration size. With a different window size the text "
-              "templates are auto-resized to the live crop, so detection "
-              "still works.")
-    return True
-
-
 # ---------------------------------------------------------------------------
 # Whole-game automaton (cast -> wait -> fish -> cast ...)
 # ---------------------------------------------------------------------------
@@ -1201,14 +1049,6 @@ def calibrate_color(cfg: Config) -> Tuple[int, int, int, int]:
     return r
 
 
-def stamp_reference(cfg: Config):
-    """Record the Roblox window rect + DPI in effect right now, so this
-    cfg.json can be auto-fitted to other screens later."""
-    set_dpi_aware()
-    cfg.ref_dpi = dpi_scale()
-    cfg.ref_window = find_roblox_rect()
-
-
 # ---------------------------------------------------------------------------
 # Config persistence
 # ---------------------------------------------------------------------------
@@ -1219,8 +1059,7 @@ def save_config(cfg: Config, path: str):
             "seq_locations": cfg.seq_locations,
             "mode2_seq_locations": cfg.mode2_seq_locations,
             "mode2_store_locations": cfg.mode2_store_locations,
-            "text_ref_images": cfg.text_ref_images,
-            "ref_window": cfg.ref_window, "ref_dpi": cfg.ref_dpi}
+            "text_ref_images": cfg.text_ref_images}
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
 
@@ -1242,8 +1081,6 @@ def load_config(cfg: Config, path: str):
         cfg.mode2_store_locations = [tuple(l) for l in data["mode2_store_locations"]] \
             if data.get("mode2_store_locations") else []
         cfg.text_ref_images = data.get("text_ref_images") or {}
-        cfg.ref_window = tuple(data["ref_window"]) if data.get("ref_window") else None
-        cfg.ref_dpi = float(data.get("ref_dpi") or 1.0)
     except Exception as ex:
         print("Could not read cfg:", ex)
 
@@ -1288,12 +1125,6 @@ def main():
                          "STATE = hold|about|running (run with each state visible)")
     ap.add_argument("--cfg", default="cfg.json",
                     help="path to the saved config file (default: cfg.json)")
-    ap.add_argument("--stamp-ref", action="store_true",
-                    help="record the current Roblox window + DPI as the "
-                         "calibration reference (no other changes)")
-    ap.add_argument("--sync", action="store_true",
-                    help="map the saved calibration to THIS PC's Roblox "
-                         "window and save the result (one-time per PC)")
     args = ap.parse_args()
 
     cfg = Config()
@@ -1302,47 +1133,12 @@ def main():
 
     load_config(cfg, args.cfg)
 
-    if args.stamp_ref:
-        print("Stamping in 5 seconds — tab into Roblox...")
-        time.sleep(5)
-        stamp_reference(cfg)
-        save_config(cfg, args.cfg)
-        if cfg.ref_window is None:
-            print("No Roblox window found; reference not stamped. "
-                  "Open the game and retry.")
-        else:
-            print(f"Reference stamped: window {cfg.ref_window}, "
-                  f"DPI {int(round(cfg.ref_dpi*100))}%. Saved to {args.cfg}")
-        return
-
-    if args.sync:
-        print("Syncing in 5 seconds — tab into Roblox...")
-        time.sleep(5)
-        set_dpi_aware()
-        if cfg.ref_window is None or len(cfg.ref_window) != 4:
-            print("This cfg.json has no calibration reference window.")
-            print("On the PC that made the calibration, open the game and run:")
-            print("    python main.py --stamp-ref")
-            print("then copy this cfg.json and re-run --sync here.")
-            return
-        cur = find_roblox_rect()
-        if cur is None:
-            print("Could not find the Roblox window. Open the game and retry.")
-            return
-        fit_calibration(cfg)
-        save_config(cfg, args.cfg)
-        print(f"Synced calibration to this window ({cur[2]}x{cur[3]}). "
-              f"Saved to {args.cfg}")
-        return
-
     if args.calibrate:
-        stamp_reference(cfg)
         cfg.region = calibrate_region()
         save_config(cfg, args.cfg)
         print(f"Region saved to {args.cfg}")
         return
     if args.set_cast:
-        stamp_reference(cfg)
         cfg.cast_pos = calibrate_cast()
         save_config(cfg, args.cfg)
         print(f"Cast spot saved to {args.cfg}")
@@ -1351,7 +1147,6 @@ def main():
         if cfg.region is None:
             print("Set the region first: python main.py --calibrate")
             return
-        stamp_reference(cfg)
         cfg.text_region = calibrate_text(cfg)
         save_config(cfg, args.cfg)
         print(f"Text region saved to {args.cfg}")
@@ -1360,25 +1155,21 @@ def main():
         if cfg.region is None:
             print("Set the region first: python main.py --calibrate")
             return
-        stamp_reference(cfg)
         cfg.color_region = calibrate_color(cfg)
         save_config(cfg, args.cfg)
         print(f"Colour region saved to {args.cfg}")
         return
     if args.set_seq:
-        stamp_reference(cfg)
         cfg.seq_locations = calibrate_seq_locations()
         save_config(cfg, args.cfg)
         print(f"Sequence locations saved to {args.cfg}")
         return
     if args.set_seq2:
-        stamp_reference(cfg)
         cfg.mode2_seq_locations = calibrate_seq2_locations()
         save_config(cfg, args.cfg)
         print(f"Mode-2 sequence locations saved to {args.cfg}")
         return
     if args.set_seq2_store:
-        stamp_reference(cfg)
         cfg.mode2_store_locations = calibrate_seq2_store_locations()
         save_config(cfg, args.cfg)
         print(f"Mode-2 store locations saved to {args.cfg}")
