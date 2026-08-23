@@ -45,7 +45,7 @@ import ctypes as _ctypes
 
 VERSION = "12"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
-UPDATE_FILES = ["main.py", "auth.py"]
+UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt"]
 
 
 def _fetch(url: str, timeout: int = 15) -> bytes:
