@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "11"
+VERSION = "12"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py"]
 
@@ -157,7 +157,7 @@ class Config:
     # "water" background learned right after casting. Color-based checks are
     # only a fallback. Tune the thresholds if the menu isn't detected.
     bg_learn_frames: int = 15        # frames to learn the no-menu background
-    bg_change_frac: float = 0.30     # fraction of pixels that must change
+    bg_change_frac: float = 0.50     # fraction of pixels that must change
     bg_change_px: int = 60           # per-channel diff to count as changed
     fish_color: Tuple[int, int, int] = (255, 200, 40)   # fallback: fish icon
     fish_tol: int = 90
@@ -182,6 +182,7 @@ class Config:
     # (while that text is on screen). When all three exist, the bot matches the
     # live region to them and releases ONLY when "running" is the best match.
     text_ref_images: dict = field(default_factory=dict)   # state -> file path
+    menu_via_text: bool = True        # menu UP only while text is visible
 
     # --- Color-change detection --------------------------------------------
     # Alternative to text detection. Hold while a calibrated region keeps its
@@ -303,6 +304,35 @@ class MenuDetector:
         diff = np.abs(frame.astype(np.int16) - self.bg)
         changed = np.mean(diff.max(axis=2) > self.cfg.bg_change_px)
         return changed > self.cfg.bg_change_frac
+
+
+def _text_visible(cfg: Config, frame: np.ndarray, watcher) -> bool:
+    if not cfg.menu_via_text or cfg.text_region is None or frame is None or frame.size == 0:
+        return False
+    crop = text_crop(frame, cfg)
+    if crop.size == 0:
+        return False
+    if watcher is not None and getattr(watcher, "templates", None):
+        if len(watcher.templates) >= 1:
+            import cv2
+            g = cv2.cvtColor(crop, cv2.COLOR_BGRA2GRAY) if crop.ndim == 3 and crop.shape[2] == 4 else \
+                cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+            for tpl in watcher.templates.values():
+                tt = tpl
+                if tt.shape != g.shape:
+                    tt = cv2.resize(tt, (g.shape[1], g.shape[0]))
+                res = cv2.matchTemplate(g, tt, cv2.TM_CCOEFF_NORMED)
+                if float(res[0, 0]) > 0.95:
+                    return True
+            return False
+    import cv2
+    g = cv2.cvtColor(crop, cv2.COLOR_BGRA2GRAY) if crop.ndim == 3 and crop.shape[2] == 4 else \
+        cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    return float(np.std(g)) > 15.0
+    import cv2
+    g = cv2.cvtColor(crop, cv2.COLOR_BGRA2GRAY) if crop.ndim == 3 and crop.shape[2] == 4 else \
+        cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY) if crop.ndim == 3 else crop
+    return float(np.std(g)) > 10.0
 
 
 # ---------------------------------------------------------------------------
@@ -784,7 +814,13 @@ class AutoFisher:
         now = time.time()
 
         if self.state == "waiting":
-            if self.menu_det.step(frame) or menu_visible(self.cfg, frame):
+            if self.cfg.menu_via_text and self.cfg.text_region is not None and getattr(self.watcher, "templates", None):
+                menu_up = _text_visible(self.cfg, frame, self.watcher)
+            else:
+                menu_up = self.menu_det.step(frame) or menu_visible(self.cfg, frame)
+                if self.cfg.menu_via_text and self.cfg.text_region is not None:
+                    menu_up = menu_up and _text_visible(self.cfg, frame, self.watcher)
+            if menu_up:
                 self.menu_frames += 1
                 if self.menu_frames >= self.cfg.menu_confirm_frames:
                     self.state = "fishing"
@@ -802,7 +838,13 @@ class AutoFisher:
             # Wait the delay before starting to hold so the menu settles in.
             if now - self.hold_start < self.cfg.hold_delay:
                 self.mouse.release()   # don't click yet
-                if self.menu_det.step(frame) or menu_visible(self.cfg, frame):
+                if self.cfg.menu_via_text and self.cfg.text_region is not None and getattr(self.watcher, "templates", None):
+                    _menu = _text_visible(self.cfg, frame, self.watcher)
+                else:
+                    _menu = self.menu_det.step(frame) or menu_visible(self.cfg, frame)
+                    if self.cfg.menu_via_text and self.cfg.text_region is not None:
+                        _menu = _menu and _text_visible(self.cfg, frame, self.watcher)
+                if _menu:
                     self.end_frames = 0
                 elif self.end_frames >= self.cfg.end_idle_frames:
                     self.caught += 1
@@ -820,7 +862,13 @@ class AutoFisher:
                     running = True
             self._apply_hold(running)
 
-            if self.menu_det.step(frame) or menu_visible(self.cfg, frame):
+            if self.cfg.menu_via_text and self.cfg.text_region is not None and getattr(self.watcher, "templates", None):
+                _menu2 = _text_visible(self.cfg, frame, self.watcher)
+            else:
+                _menu2 = self.menu_det.step(frame) or menu_visible(self.cfg, frame)
+                if self.cfg.menu_via_text and self.cfg.text_region is not None:
+                    _menu2 = _menu2 and _text_visible(self.cfg, frame, self.watcher)
+            if _menu2:
                 self.end_frames = 0
             else:
                 self.end_frames += 1
@@ -1258,12 +1306,19 @@ def _preview_loop(cfg: Config, cap: Capture):
     color_watcher = ColorWatcher(cfg)
     menu_det = MenuDetector(cfg)
     print("Preview: box = text region, 'changed' = running state, 'menu' = menu up.")
+    print(f"Templates loaded: {len(watcher.templates)} (need 3 for text-menu)")
     while True:
         frame = cap.grab()
         running, frac = watcher.step(frame)
         if cfg.color_region is not None:
             running, frac = color_watcher.step(frame)
-        menu = menu_det.step(frame) or menu_visible(cfg, frame)
+        # Use same menu logic as the bot: text-only when templates exist
+        if cfg.menu_via_text and cfg.text_region is not None and len(watcher.templates) >= 1:
+            menu = _text_visible(cfg, frame, watcher)
+        else:
+            menu = menu_det.step(frame) or menu_visible(cfg, frame)
+            if cfg.menu_via_text and cfg.text_region is not None:
+                menu = menu and _text_visible(cfg, frame, watcher)
         crop = text_crop(frame, cfg)
 
         bgr = frame[:, :, :3].copy()
