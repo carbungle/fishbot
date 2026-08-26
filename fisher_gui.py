@@ -235,16 +235,16 @@ def _on_calibrate():
         try:
             import main as _m
             cfg = _m.Config()
-            _m.load_config(cfg, "cfg.json")
+            _m.load_config(cfg, os.path.join("config","cfg.json"))
             # Step 1/9 region
             q.put("\n[1/9] Click TOP-LEFT then BOTTOM-RIGHT of fishing bar...\n")
             cfg.region = _m.calibrate_region()
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[1/9] Region saved: {cfg.region}\n")
             # Step 2/9 text region
             q.put("\n[2/9] Click TOP-LEFT then BOTTOM-RIGHT of status TEXT...\n")
             cfg.text_region = _m.calibrate_text(cfg)
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[2/9] Text region: {cfg.text_region}\n")
             # Step 3/5 text snaps - hold
             q.put("\n[3/9] Hold text: make HOLD visible then press Enter in console...\n")
@@ -256,13 +256,13 @@ def _on_calibrate():
             input("")
             crop = text_crop(cap.grab(), cfg)
             import os as _os
-            _assets = os.path.join(os.path.dirname(os.path.abspath(_os.path.join(HERE, 'cfg.json'))) or HERE, "assets")
+            _assets = os.path.join(HERE, "assets")
             try: _os.makedirs(_assets, exist_ok=True)
             except: pass
             out = _os.path.join(_assets, "text_hold.png")
             _cv2.imwrite(out, crop[:,:,:3] if crop.ndim==3 and crop.shape[2]==4 else crop)
             cfg.text_ref_images["hold"] = os.path.join("assets","text_hold.png")
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[3/9] Saved hold to {out}\n")
             # Step 4/9 about
             q.put("\n[4/9] About to run: make 'ABOUT TO START RUNNING' visible then press Enter...\n")
@@ -272,7 +272,7 @@ def _on_calibrate():
             out = _os.path.join(_assets, "text_about.png")
             _cv2.imwrite(out, crop[:,:,:3] if crop.ndim==3 and crop.shape[2]==4 else crop)
             cfg.text_ref_images["about"] = os.path.join("assets","text_about.png")
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[4/9] Saved about to {out}\n")
             # Step 5/9 running
             q.put("\n[5/9] Running text: make 'RUNNING' visible then press Enter...\n")
@@ -282,27 +282,27 @@ def _on_calibrate():
             out = _os.path.join(_assets, "text_running.png")
             _cv2.imwrite(out, crop[:,:,:3] if crop.ndim==3 and crop.shape[2]==4 else crop)
             cfg.text_ref_images["running"] = os.path.join("assets","text_running.png")
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[5/9] Saved running to {out}\n")
             # Step 6/9 color
             q.put("\n[6/9] Click TOP-LEFT then BOTTOM-RIGHT of colour indicator...\n")
             cfg.color_region = _m.calibrate_color(cfg)
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[6/9] Colour region: {cfg.color_region}\n")
             # Step 7/9 seq 4
             q.put("\n[7/9] Click 4 SEQUENCE locations (3 after F, 1 after T)...\n")
             cfg.seq_locations = _m.calibrate_seq_locations()
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[7/9] Seq 4: {cfg.seq_locations}\n")
             # Step 8/9 mode2 7
             q.put("\n[8/9] MODE2: Click 7 locations (6 after F, 1 after T)...\n")
             cfg.mode2_seq_locations = _m.calibrate_seq2_locations()
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[8/9] Mode2 7: {cfg.mode2_seq_locations}\n")
             # Step 9/9 mode2 store 4
             q.put("\n[9/9] MODE2 STORE: Click 4 locations (3 after F, 1 after T)...\n")
             cfg.mode2_store_locations = _m.calibrate_seq2_store_locations()
-            _m.save_config(cfg, "cfg.json")
+            _m.save_config(cfg, os.path.join("config","cfg.json"))
             q.put(f"[9/9] Mode2 store 4: {cfg.mode2_store_locations}\n")
             q.put("\n[calibrate] Complete! You can now use F8 to fish.\n")
         except Exception as e:

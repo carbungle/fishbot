@@ -7,3 +7,6 @@ fish_counter.txt
 *.pyc
 __pycache__/
 *.new
+desktop.ini
+.DS_Store
+Thumbs.db

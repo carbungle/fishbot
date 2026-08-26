@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "18"
+VERSION = "19"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt", "fisher_gui.py", "fisher.bat", "run.bat"]
 
@@ -118,7 +118,8 @@ GREEN = "\x1b[92m"
 RED = "\x1b[91m"
 DIM = "\x1b[2m"
 RESET = "\x1b[0m"
-COUNTER_FILE = "fish_counter.txt"
+COUNTER_FILE = os.path.join("data", "fish_counter.txt")
+_COUNTER_OLD = "fish_counter.txt"
 
 
 def _info(msg):
@@ -133,18 +134,45 @@ def _stopped_msg(msg):
     print(f"{RED}{msg}{RESET}")
 
 
+def _counter_path() -> str:
+    # data/fish_counter.txt with fallback auto-migrate
+    if os.path.exists(COUNTER_FILE):
+        return COUNTER_FILE
+    if os.path.exists(_COUNTER_OLD):
+        try:
+            os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
+            import shutil
+            shutil.move(_COUNTER_OLD, COUNTER_FILE)
+        except:
+            pass
+        return COUNTER_FILE if os.path.exists(COUNTER_FILE) else _COUNTER_OLD
+    return COUNTER_FILE
+
 def load_total_caught() -> int:
     """Load the all-time fish counter saved on disk (survives restarts)."""
-    try:
-        with open(COUNTER_FILE) as f:
-            return int(f.read().strip() or "0")
-    except Exception:
-        return 0
+    for p in (COUNTER_FILE, _COUNTER_OLD):
+        try:
+            with open(p) as f:
+                v = int(f.read().strip() or "0")
+                # migrate if was old
+                if p == _COUNTER_OLD and not os.path.exists(COUNTER_FILE):
+                    try:
+                        os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
+                        import shutil
+                        shutil.move(p, COUNTER_FILE)
+                    except: pass
+                return v
+        except Exception:
+            continue
+    return 0
 
 
 def save_total_caught(n: int):
     try:
-        with open(COUNTER_FILE, "w") as f:
+        os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
+    except: pass
+    try:
+        with open(_counter_path(), "w") as f:
             f.write(str(n))
     except Exception:
         pass
@@ -1234,7 +1262,19 @@ def calibrate_color(cfg: Config) -> Tuple[int, int, int, int]:
 # Config persistence
 # ---------------------------------------------------------------------------
 
+def _resolve_cfg(path: str) -> str:
+    # default organized path is config/cfg.json, fallback to old root
+    if path in ("cfg.json", "config/cfg.json"):
+        for cand in (os.path.join("config","cfg.json"), "cfg.json", os.path.join(os.path.dirname(os.path.abspath(__file__)),"config","cfg.json")):
+            if os.path.exists(cand):
+                return cand
+        return os.path.join("config","cfg.json")
+    return path
+
 def save_config(cfg: Config, path: str):
+    path = _resolve_cfg(path)
+    try: os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    except: pass
     data = {"region": cfg.region, "cast_pos": cfg.cast_pos,
             "text_region": cfg.text_region, "color_region": cfg.color_region,
             "seq_locations": cfg.seq_locations,
@@ -1246,8 +1286,14 @@ def save_config(cfg: Config, path: str):
 
 
 def load_config(cfg: Config, path: str):
+    path = _resolve_cfg(path)
     if not os.path.exists(path):
-        return
+        # try old location
+        alt = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cfg.json")
+        if os.path.exists(alt):
+            path = alt
+        else:
+            return
     try:
         with open(path) as f:
             data = json.load(f)
@@ -1287,22 +1333,46 @@ def _migrate_layout():
         if os.path.exists(desk) and not os.path.exists(os.path.join(a,"shutdown.png")):
             try: shutil.copy(desk, os.path.join(a,"shutdown.png"))
             except: pass
-        cfgp = os.path.join(here, "cfg.json")
-        if os.path.exists(cfgp):
-            try:
-                with open(cfgp) as f: d=json.load(f)
-                tr=d.get("text_ref_images") or {}
-                changed=False
-                for k,v in list(tr.items()):
-                    if v and "assets" not in v:
-                        tr[k]=os.path.join("assets", os.path.basename(v))
-                        changed=True
-                    elif v:
-                        tr[k]=os.path.join("assets", os.path.basename(v))
-                if changed:
-                    d["text_ref_images"]=tr
-                    with open(cfgp,"w") as f: json.dump(d,f,indent=2)
-            except: pass
+        # migrate cfg.json / cfg.txt to config/
+        try:
+            os.makedirs(os.path.join(here, "config"), exist_ok=True)
+            for name in ("cfg.json","cfg.txt"):
+                s=os.path.join(here, name)
+                d=os.path.join(here, "config", name)
+                if os.path.exists(s) and not os.path.exists(d):
+                    try: shutil.move(s,d)
+                    except: pass
+        except: pass
+        # migrate data files to data/
+        try:
+            os.makedirs(os.path.join(here, "data"), exist_ok=True)
+            for name in ("users.dat","session.dat","fish_counter.txt","owner.dat","fish_counter.txt"):
+                s=os.path.join(here, name)
+                d=os.path.join(here, "data", name)
+                if os.path.exists(s) and not os.path.exists(d):
+                    try: shutil.move(s,d)
+                    except: pass
+        except: pass
+        # patch config/cfg.json if still at new location
+        cfgp = os.path.join(here, "config", "cfg.json")
+        altp = os.path.join(here, "cfg.json")
+        for p in (cfgp, altp):
+            if os.path.exists(p):
+                try:
+                    with open(p) as f: d=json.load(f)
+                    tr=d.get("text_ref_images") or {}
+                    changed=False
+                    for k,v in list(tr.items()):
+                        if v and "assets" not in v:
+                            tr[k]=os.path.join("assets", os.path.basename(v))
+                            changed=True
+                        elif v:
+                            tr[k]=os.path.join("assets", os.path.basename(v))
+                    if changed:
+                        d["text_ref_images"]=tr
+                        with open(p,"w") as f: json.dump(d,f,indent=2)
+                except: pass
+                break
         # create fisher.bat if missing
         fb=os.path.join(here,"fisher.bat")
         if not os.path.exists(fb):
@@ -1353,8 +1423,8 @@ def main():
     ap.add_argument("--snap-text", metavar="STATE",
                     help="save the current text-region crop as a reference for "
                          "STATE = hold|about|running (run with each state visible)")
-    ap.add_argument("--cfg", default="cfg.json",
-                    help="path to the saved config file (default: cfg.json)")
+    ap.add_argument("--cfg", default=os.path.join("config","cfg.json"),
+                    help="path to the saved config file (default: config/cfg.json)")
     args = ap.parse_args()
 
     cfg = Config()
@@ -1420,7 +1490,7 @@ def main():
         input("")
         crop = text_crop(cap.grab(), cfg)
         import os as _os
-        _assets = os.path.join(os.path.dirname(args.cfg) or ".", "assets")
+        _assets = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
         try:
             os.makedirs(_assets, exist_ok=True)
         except Exception:

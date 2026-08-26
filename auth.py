@@ -28,12 +28,30 @@ def _dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _data_file(name: str) -> str:
+    # new organized location: data/<name>, fallback to old root for migration
+    p = os.path.join(_dir(), "data", name)
+    if os.path.exists(p):
+        return p
+    old = os.path.join(_dir(), name)
+    if os.path.exists(old):
+        # auto-migrate to data/
+        try:
+            os.makedirs(os.path.join(_dir(), "data"), exist_ok=True)
+            import shutil
+            shutil.move(old, p)
+        except:
+            pass
+        return p
+    return p
+
+
 def store_path() -> str:
-    return os.path.join(_dir(), "users.dat")
+    return _data_file("users.dat")
 
 
 def _session_path() -> str:
-    return os.path.join(_dir(), "session.dat")
+    return _data_file("session.dat")
 
 
 def machine_id() -> str:
@@ -86,14 +104,17 @@ def _b64(data: bytes) -> str:
 
 def _owner_creds():
     """Return (kdf, salt, digest) for the owner gate."""
-    p = os.path.join(_dir(), "owner.dat")
-    if os.path.exists(p):
-        try:
-            with open(p, "rb") as f:
-                d = json.loads(_mask(base64.b64decode(f.read())).decode("utf-8"))
-            return "scrypt", base64.b64decode(d["salt"]), base64.b64decode(d["digest"])
-        except Exception:
-            pass
+    p = _data_file("owner.dat")
+    # fallback old root owner.dat
+    alt = os.path.join(_dir(), "owner.dat")
+    for cand in (p, alt):
+        if os.path.exists(cand):
+            try:
+                with open(cand, "rb") as f:
+                    d = json.loads(_mask(base64.b64decode(f.read())).decode("utf-8"))
+                return "scrypt", base64.b64decode(d["salt"]), base64.b64decode(d["digest"])
+            except Exception:
+                pass
     return OWNER_KDF, base64.b64decode(OWNER_SALT_B64), base64.b64decode(OWNER_DIGEST_B64)
 
 
@@ -102,7 +123,8 @@ def _bake_owner(pw: str) -> None:
     payload = json.dumps({"salt": _b64(salt),
                           "digest": _b64(_scrypt(pw, salt))},
                          separators=(",", ":")).encode("utf-8")
-    with open(os.path.join(_dir(), "owner.dat"), "wb") as f:
+    os.makedirs(os.path.join(_dir(), "data"), exist_ok=True)
+    with open(os.path.join(_dir(), "data", "owner.dat"), "wb") as f:
         f.write(base64.b64encode(_mask(payload)))
 
 
