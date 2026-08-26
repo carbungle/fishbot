@@ -43,9 +43,9 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "17"
+VERSION = "18"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
-UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt"]
+UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt", "fisher_gui.py", "fisher.bat", "run.bat"]
 
 
 def _fetch(url: str, timeout: int = 15) -> bytes:
@@ -695,6 +695,7 @@ def _load_shutdown_template():
     import cv2
     cands = [
         r"C:\Users\xneas\Desktop\shutdown.png",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "shutdown.png"),
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "shutdown.png"),
         os.path.join(os.path.expanduser("~"), "Desktop", "shutdown.png"),
     ]
@@ -1269,7 +1270,56 @@ def load_config(cfg: Config, path: str):
 # Main
 # ---------------------------------------------------------------------------
 
+def _migrate_layout():
+    """One-time reorg: move root pngs -> assets/, patch cfg.json, remove old bats."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        a = os.path.join(here, "assets")
+        os.makedirs(a, exist_ok=True)
+        import shutil, json
+        for name in ("text_hold.png","text_about.png","text_running.png","shutdown.png"):
+            s = os.path.join(here, name)
+            d = os.path.join(a, name)
+            if os.path.exists(s) and not os.path.exists(d):
+                try: shutil.move(s, d)
+                except: pass
+        desk = os.path.join(os.path.expanduser("~"), "Desktop", "shutdown.png")
+        if os.path.exists(desk) and not os.path.exists(os.path.join(a,"shutdown.png")):
+            try: shutil.copy(desk, os.path.join(a,"shutdown.png"))
+            except: pass
+        cfgp = os.path.join(here, "cfg.json")
+        if os.path.exists(cfgp):
+            try:
+                with open(cfgp) as f: d=json.load(f)
+                tr=d.get("text_ref_images") or {}
+                changed=False
+                for k,v in list(tr.items()):
+                    if v and "assets" not in v:
+                        tr[k]=os.path.join("assets", os.path.basename(v))
+                        changed=True
+                    elif v:
+                        tr[k]=os.path.join("assets", os.path.basename(v))
+                if changed:
+                    d["text_ref_images"]=tr
+                    with open(cfgp,"w") as f: json.dump(d,f,indent=2)
+            except: pass
+        # create fisher.bat if missing
+        fb=os.path.join(here,"fisher.bat")
+        if not os.path.exists(fb):
+            try:
+                with open(fb,"w") as f:
+                    f.write('@echo off\ncd /d "%~dp0"\npython fisher_gui.py\nif errorlevel 1 py fisher_gui.py\n')
+            except: pass
+        # remove old bats silently (keep fisher.bat and run.bat migration stub)
+        for b in ("setup.bat","calibrate.bat","preview.bat"):
+            p=os.path.join(here,b)
+            if os.path.exists(p):
+                try: os.remove(p)
+                except: pass
+    except: pass
+
 def main():
+    _migrate_layout()
     if "--update" in sys.argv:
         check_update(force=True)
         sys.exit(0)
@@ -1370,7 +1420,12 @@ def main():
         input("")
         crop = text_crop(cap.grab(), cfg)
         import os as _os
-        out = os.path.join(os.path.dirname(args.cfg) or ".", f"text_{state}.png")
+        _assets = os.path.join(os.path.dirname(args.cfg) or ".", "assets")
+        try:
+            os.makedirs(_assets, exist_ok=True)
+        except Exception:
+            pass
+        out = os.path.join(_assets, f"text_{state}.png")
         ok = _cv2.imwrite(out, crop[:, :, :3] if crop.ndim == 3 and crop.shape[2] == 4 else crop)
         if not ok:
             print("Could not write", out); return
