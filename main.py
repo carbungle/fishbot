@@ -70,8 +70,13 @@ def check_update(force: bool = False) -> bool:
         remote = _fetch(base + "/VERSION.txt").decode("utf-8").strip()
     except Exception:
         return False
-    if apply is False and remote == _local_version():
-        return False
+    if apply is False:
+        try:
+            if int(remote) <= int(_local_version()):
+                return False
+        except Exception:
+            if remote == _local_version():
+                return False
     if apply is False:
         print(f"Updating {_local_version()} -> {remote} ...")
     elif apply is True:
