@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "12"
+VERSION = "13"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt"]
 
@@ -224,7 +224,6 @@ class Config:
     #   box out), press 1, click again to continue.
     # Startup also throws the box: click once, press 1, click again.
     mode2_every_n_catches: int = 15
-    mode2_store_every_n_catches: int = 2
     mode2_store_every_n_catches: int = 2
     mode2_hold_seconds: float = 20.0
     mode2_seq_locations: list = field(default_factory=list)  # 7 absolute (x,y)
@@ -888,12 +887,26 @@ class AutoFisher:
         self.mouse.release()
         time.sleep(self.cfg.post_catch_pause)
         if self.mode == "box":
-            # Store in the trunk every mode2_store_every_n_catches catches
-            # (mode 2's own F + 4-spot sequence, using mode2_store_locations).
+            # Box mode: quick timed store after menu down.
+            # Menu up -> catch -> menu down -> click water -> F+first -> T+last.
             if self.cfg.mode2_store_locations and \
                     self.caught % self.cfg.mode2_store_every_n_catches == 0:
-                self.run_post_catch_sequence(use_seq2=True)
-            # Big maintenance cycle every mode2_every_n_catches catches.
+                self._run_box_quick_store()
+                # If this catch also hits the maintenance interval, run it right after the quick store.
+                if self.cfg.mode2_seq_locations and \
+                        self.caught % self.cfg.mode2_every_n_catches == 0:
+                    self._mode2_maintenance()
+                    self.total_caught += 1
+                    if not self.cfg.demo:
+                        save_total_caught(self.total_caught)
+                    self._mode2_enter_waiting()
+                    return
+                self.total_caught += 1
+                if not self.cfg.demo:
+                    save_total_caught(self.total_caught)
+                self._mode2_enter_waiting()
+                return
+            # Big maintenance cycle every mode2_every_n_catches catches (when not also a store).
             if self.cfg.mode2_seq_locations and \
                     self.caught % self.cfg.mode2_every_n_catches == 0:
                 self._mode2_maintenance()
@@ -987,6 +1000,37 @@ class AutoFisher:
         if self.water_spot is not None:
             self.mouse.move_to(*self.water_spot)
             print("Back to water spot:", self.water_spot)
+
+    def _run_box_quick_store(self):
+        """Box mode only: after catch, menu down, click water, then
+        F + first location, T + last location, with quick mouse moves."""
+        locs = list(self.cfg.mode2_store_locations)
+        if len(locs) < 4:
+            print("Box store skipped (need 4 calibrated locations).")
+            return
+        print("Box store (quick): water, F, first, T, last...")
+        # Click water again to recast (menu already down)
+        if self.water_spot is not None:
+            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=0)
+            time.sleep(0.05)
+        self.mouse.click_pos()
+        time.sleep(0.15)
+        self.mouse.press_key("f")
+        time.sleep(0.1)
+        import autoit
+        self.mouse.move_to(int(locs[0][0]), int(locs[0][1]), speed=0)
+        time.sleep(0.05)
+        autoit.mouse_click("left")
+        time.sleep(0.08)
+        self.mouse.press_key("t")
+        time.sleep(0.1)
+        self.mouse.move_to(int(locs[3][0]), int(locs[3][1]), speed=0)
+        time.sleep(0.05)
+        autoit.mouse_click("left")
+        time.sleep(0.08)
+        if self.water_spot is not None:
+            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=0)
+            time.sleep(0.05)
 
 
 # ---------------------------------------------------------------------------
