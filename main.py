@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "13"
+VERSION = "14"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt"]
 
@@ -1011,25 +1011,25 @@ class AutoFisher:
         print("Box store (quick): water, F, first, T, last...")
         # Click water again to recast (menu already down)
         if self.water_spot is not None:
-            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=0)
+            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
             time.sleep(0.05)
         self.mouse.click_pos()
         time.sleep(0.15)
         self.mouse.press_key("f")
         time.sleep(0.1)
         import autoit
-        self.mouse.move_to(int(locs[0][0]), int(locs[0][1]), speed=0)
+        self.mouse.move_to(int(locs[0][0]), int(locs[0][1]), speed=5)
         time.sleep(0.05)
         autoit.mouse_click("left")
         time.sleep(0.08)
         self.mouse.press_key("t")
         time.sleep(0.1)
-        self.mouse.move_to(int(locs[3][0]), int(locs[3][1]), speed=0)
+        self.mouse.move_to(int(locs[3][0]), int(locs[3][1]), speed=5)
         time.sleep(0.05)
         autoit.mouse_click("left")
         time.sleep(0.08)
         if self.water_spot is not None:
-            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=0)
+            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
             time.sleep(0.05)
 
 
