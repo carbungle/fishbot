@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "14"
+VERSION = "15"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt"]
 
@@ -224,7 +224,7 @@ class Config:
     #   box out), press 1, click again to continue.
     # Startup also throws the box: click once, press 1, click again.
     mode2_every_n_catches: int = 15
-    mode2_store_every_n_catches: int = 2
+    mode2_store_every_n_catches: int = 1
     mode2_hold_seconds: float = 20.0
     mode2_seq_locations: list = field(default_factory=list)  # 7 absolute (x,y)
     mode2_store_locations: list = field(default_factory=list)  # 4 absolute (x,y)
@@ -962,18 +962,23 @@ class AutoFisher:
         time.sleep(0.3)
         self.mouse.press_key("f")
         time.sleep(0.3)
+        import autoit as _autoit
         for x, y in locs[:6]:
-            self.mouse.click_at(x, y)
-            time.sleep(0.3)
+            self.mouse.move_to(int(x), int(y), speed=5)
+            time.sleep(0.05)
+            _autoit.mouse_click("left")
+            time.sleep(0.08)
         self.mouse.press_key("t")
         time.sleep(0.3)
         x, y = locs[6]
-        self.mouse.click_at(x, y)
+        self.mouse.move_to(int(x), int(y), speed=5)
+        time.sleep(0.05)
+        _autoit.mouse_click("left")
         time.sleep(0.3)
         self.mouse.press_key("2")
         time.sleep(0.3)
         if self.water_spot is not None:
-            self.mouse.move_to(*self.water_spot)
+            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
             print("Back to water spot:", self.water_spot)
             time.sleep(0.3)
         self._mode2_throw_box()
