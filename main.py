@@ -763,8 +763,6 @@ class AutoFisher:
         self.mode2_startup_done = False  # box-throw done at start of a run
         self.shutdown_tpl, self.shutdown_path = _load_shutdown_template()
         self._last_shutdown_check = 0.0
-        if self.shutdown_tpl is not None:
-            _info(f"Shutdown image: {os.path.basename(self.shutdown_path)} pixel-perfect 0.99")
 
     def on_press_key(self, key):
         try:
@@ -981,6 +979,27 @@ class AutoFisher:
             save_total_caught(self.total_caught)
         self.start_casting()
 
+    def _scan_shutdown(self):
+        """Called after the last click of any sequence. Logs 'scanned' every time,
+        and pauses the bot if shutdown.png is visible. Returns True if shutdown detected."""
+        print("scanned")
+        if self.shutdown_tpl is None:
+            return False
+        if _shutdown_visible_on_screen(self.shutdown_tpl):
+            if self.enabled:
+                print("Shutdown image detected — paused.")
+                self.enabled = False
+                self.state = "idle"
+                try:
+                    self.mouse.release()
+                except Exception:
+                    pass
+            else:
+                print("Shutdown image detected — paused.")
+            print("shutdown/paused")
+            return True
+        return False
+
     def _mode2_enter_waiting(self):
         self.state = "waiting"
         self.menu_frames = 0
@@ -997,6 +1016,8 @@ class AutoFisher:
         time.sleep(0.3)
         self.mouse.click_pos()
         time.sleep(0.4)
+        time.sleep(2.0)
+        self._scan_shutdown()
 
     def _mode2_maintenance(self):
         """Every N catches: press 2, hold left click mode2_hold_seconds,
@@ -1031,6 +1052,8 @@ class AutoFisher:
         time.sleep(0.05)
         _autoit.mouse_click("left")
         time.sleep(0.3)
+        time.sleep(2.0)
+        self._scan_shutdown()
         self.mouse.press_key("2")
         time.sleep(0.3)
         if self.water_spot is not None:
@@ -1061,6 +1084,8 @@ class AutoFisher:
         time.sleep(0.05)
         _autoit2.mouse_click("left")
         time.sleep(0.08)
+        time.sleep(2.0)
+        self._scan_shutdown()
         if self.water_spot is not None:
             self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
 
@@ -1089,6 +1114,8 @@ class AutoFisher:
         time.sleep(0.05)
         autoit.mouse_click("left")
         time.sleep(0.08)
+        time.sleep(2.0)
+        self._scan_shutdown()
         if self.water_spot is not None:
             self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
             time.sleep(0.05)
@@ -1387,14 +1414,6 @@ def main():
 
     try:
         while not hooks["done"]:
-            # Pixel-perfect shutdown image anywhere on screen
-            if auto.shutdown_tpl is not None and time.time() - auto._last_shutdown_check > 0.4:
-                auto._last_shutdown_check = time.time()
-                if _shutdown_visible_on_screen(auto.shutdown_tpl):
-                    print("Shutdown image detected — exiting.")
-                    mouse.release()
-                    hooks["done"] = True
-                    break
             if args.demo:
                 auto.step_demo()
                 time.sleep(0.05)
