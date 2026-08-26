@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "16"
+VERSION = "17"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt"]
 
@@ -690,6 +690,53 @@ def focus_roblox():
     return False
 
 
+def _load_shutdown_template():
+    """Load Desktop/shutdown.png pixel-perfect template if present."""
+    import cv2
+    cands = [
+        r"C:\Users\xneas\Desktop\shutdown.png",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "shutdown.png"),
+        os.path.join(os.path.expanduser("~"), "Desktop", "shutdown.png"),
+    ]
+    for p in cands:
+        try:
+            if p and os.path.exists(p):
+                img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+                if img is not None and img.size > 0:
+                    return img, p
+        except Exception:
+            continue
+    return None, None
+
+
+def _shutdown_visible_on_screen(tpl) -> bool:
+    """True if tpl appears anywhere on the primary monitor (pixel-perfect 0.99)."""
+    if tpl is None:
+        return False
+    try:
+        import cv2
+        import mss
+        import numpy as np
+        with mss.mss() as sct:
+            mon = sct.monitors[1]
+            raw = sct.grab(mon)
+            frame = np.frombuffer(raw.raw, dtype=np.uint8).reshape(raw.height, raw.width, -1)
+            # drop alpha if present, convert to gray
+            if frame.shape[2] == 4:
+                gray = cv2.cvtColor(frame[:, :, :3], cv2.COLOR_BGR2GRAY)
+            else:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+            if gray.shape[0] < tpl.shape[0] or gray.shape[1] < tpl.shape[1]:
+                return False
+            res = cv2.matchTemplate(gray, tpl, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            return float(max_val) > 0.99
+    except Exception:
+        return False
+
+
+
+
 # ---------------------------------------------------------------------------
 # Whole-game automaton (cast -> wait -> fish -> cast ...)
 # ---------------------------------------------------------------------------
@@ -714,6 +761,10 @@ class AutoFisher:
         self.total_caught = load_total_caught()   # all-time persistent count
         self.mode = "normal"            # "normal" or "box" (F1 toggles)
         self.mode2_startup_done = False  # box-throw done at start of a run
+        self.shutdown_tpl, self.shutdown_path = _load_shutdown_template()
+        self._last_shutdown_check = 0.0
+        if self.shutdown_tpl is not None:
+            _info(f"Shutdown image: {os.path.basename(self.shutdown_path)} pixel-perfect 0.99")
 
     def on_press_key(self, key):
         try:
@@ -1336,6 +1387,14 @@ def main():
 
     try:
         while not hooks["done"]:
+            # Pixel-perfect shutdown image anywhere on screen
+            if auto.shutdown_tpl is not None and time.time() - auto._last_shutdown_check > 0.4:
+                auto._last_shutdown_check = time.time()
+                if _shutdown_visible_on_screen(auto.shutdown_tpl):
+                    print("Shutdown image detected — exiting.")
+                    mouse.release()
+                    hooks["done"] = True
+                    break
             if args.demo:
                 auto.step_demo()
                 time.sleep(0.05)
