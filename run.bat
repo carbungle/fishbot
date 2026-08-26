@@ -31,14 +31,20 @@ if exist "__pycache__" rmdir /s /q "__pycache__" >nul 2>&1
 if exist "main.pyc" del /f /q "main.pyc" >nul 2>&1
 echo [migrate] folders reorganized to assets/config/data
 
-REM ensure fisher.bat exists
-if not exist "fisher.bat" (
-  echo @echo off> fisher.bat
-  echo cd /d "%%~dp0">> fisher.bat
-  echo python fisher_gui.py>> fisher.bat
-  echo if errorlevel 1 py fisher_gui.py>> fisher.bat
-  echo [migrate] created fisher.bat
-)
+REM install/update deps (old users never ran setup.bat)
+echo [migrate] checking dependencies...
+python -m pip install -r requirements.txt >nul 2>&1
+if errorlevel 1 py -m pip install -r requirements.txt >nul 2>&1
+if errorlevel 1 python3 -m pip install -r requirements.txt >nul 2>&1
+
+REM ensure fisher.bat is latest (overwrite)
+echo @echo off> fisher.bat
+echo cd /d "%%~dp0">> fisher.bat
+echo python fisher_gui.py>> fisher.bat
+echo if errorlevel 1 py fisher_gui.py>> fisher.bat
+echo if errorlevel 1 python3 fisher_gui.py>> fisher.bat
+echo if errorlevel 1 pause>> fisher.bat
+echo [migrate] fisher.bat refreshed
 
 REM add to PATH for 'fisher' command
 echo %PATH% | find /I "%~dp0" >nul

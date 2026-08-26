@@ -16,6 +16,10 @@ if errorlevel 1 (
   py -m pip install -r requirements.txt
 )
 if errorlevel 1 (
+  echo [setup] trying python3...
+  python3 -m pip install -r requirements.txt
+)
+if errorlevel 1 (
   echo [setup] pip failed - make sure Python 3.9+ is installed and on PATH
   pause
   goto :eof
@@ -28,6 +32,7 @@ if not exist "fisher.bat" (
   echo cd /d "%%~dp0">> fisher.bat
   echo python fisher_gui.py>> fisher.bat
   echo if errorlevel 1 py fisher_gui.py>> fisher.bat
+  echo if errorlevel 1 python3 fisher_gui.py>> fisher.bat
 )
 
 REM add to PATH for 'fisher' command
