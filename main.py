@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "15"
+VERSION = "16"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt"]
 
@@ -994,31 +994,31 @@ class AutoFisher:
         use_seq2=True uses mode 2's own store locations (mode2_store_locations)."""
         locs = list(self.cfg.mode2_store_locations if use_seq2 else self.cfg.seq_locations)
         if len(locs) < 4:
-            print("Post-catch sequence skipped (need 4 calibrated locations).")
             return
-        print("Post-catch sequence: F, spots 1-3, T, spot 4...")
         self.mouse.press_key("f")
-        time.sleep(0.3)
+        time.sleep(0.15)
+        import autoit as _autoit2
         for x, y in locs[:3]:
-            self.mouse.click_at(x, y)
-            time.sleep(0.3)
+            self.mouse.move_to(int(x), int(y), speed=5)
+            time.sleep(0.05)
+            _autoit2.mouse_click("left")
+            time.sleep(0.08)
         self.mouse.press_key("t")
-        time.sleep(0.3)
+        time.sleep(0.15)
         x, y = locs[3]
-        self.mouse.click_at(x, y)
-        time.sleep(0.3)
+        self.mouse.move_to(int(x), int(y), speed=5)
+        time.sleep(0.05)
+        _autoit2.mouse_click("left")
+        time.sleep(0.08)
         if self.water_spot is not None:
-            self.mouse.move_to(*self.water_spot)
-            print("Back to water spot:", self.water_spot)
+            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
 
     def _run_box_quick_store(self):
         """Box mode only: after catch, menu down, click water, then
         F + first location, T + last location, with quick mouse moves."""
         locs = list(self.cfg.mode2_store_locations)
         if len(locs) < 4:
-            print("Box store skipped (need 4 calibrated locations).")
             return
-        print("Box store (quick): water, F, first, T, last...")
         # Click water again to recast (menu already down)
         if self.water_spot is not None:
             self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
