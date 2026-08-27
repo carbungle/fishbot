@@ -43,9 +43,10 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "21"
+VERSION = "22"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt", "fisher_gui.py", "fisher.bat", "run.bat"]
+AUTO_LEAVE_ENABLED = False
 
 
 def _fetch(url: str, timeout: int = 15) -> bytes:
@@ -1010,11 +1011,57 @@ class AutoFisher:
 
     def _scan_shutdown(self):
         """Called after the last click of any sequence. Logs 'scanned' every time,
-        and pauses the bot if shutdown.png is visible. Returns True if shutdown detected."""
+        and pauses the bot if shutdown.png is visible. If AUTO_LEAVE_ENABLED and
+        shutdown is seen, waits 5s, presses Esc, waits 1s, presses l, Enter, then exits."""
         print("scanned")
         if self.shutdown_tpl is None:
             return False
         if _shutdown_visible_on_screen(self.shutdown_tpl):
+            # check global auto-leave toggle (set by GUI button)
+            try:
+                _auto = bool(globals().get("AUTO_LEAVE_ENABLED", False))
+            except:
+                _auto = False
+            if _auto:
+                print("Shutdown image detected — auto leave in 5s...")
+                try:
+                    self.mouse.release()
+                except: pass
+                time.sleep(5)
+                # Esc
+                try:
+                    import autoit as _ai
+                    _ai.send("{ESC}")
+                except:
+                    try:
+                        from pynput.keyboard import Controller as _KC, Key as _KK
+                        _k=_KC(); _k.press(_KK.esc); _k.release(_KK.esc)
+                    except: pass
+                time.sleep(1)
+                # l + Enter
+                try:
+                    import autoit as _ai2
+                    _ai2.send("l")
+                    time.sleep(0.1)
+                    _ai2.send("{ENTER}")
+                except:
+                    try:
+                        from pynput.keyboard import Controller as _KC2, Key as _KK2
+                        _k2=_KC2(); _k2.press("l"); _k2.release("l")
+                        time.sleep(0.1)
+                        _k2.press(_KK2.enter); _k2.release(_KK2.enter)
+                    except: pass
+                print("auto leave executed — exiting")
+                try:
+                    self.enabled=False; self.state="idle"
+                    self.mouse.release()
+                except: pass
+                # turn script off
+                try:
+                    os._exit(0)
+                except:
+                    pass
+                return True
             if self.enabled:
                 print("Shutdown image detected — paused.")
                 self.enabled = False

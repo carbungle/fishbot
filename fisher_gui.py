@@ -315,6 +315,25 @@ cal_btn = tk.Button(title, text="calibrate", bg="#2d2d2d", fg="#cccccc", activeb
                     relief="flat", bd=0, padx=10, pady=2, font=("SF Mono", 8), cursor="hand2", command=_on_calibrate)
 cal_btn.pack(side="right", padx=12, pady=4)
 
+# Auto leave button - beside calibrate, starts red, turns green when on
+_auto_state = {"on": False}
+def _on_auto_leave():
+    _auto_state["on"] = not _auto_state["on"]
+    try:
+        import main as _main_al
+        _main_al.AUTO_LEAVE_ENABLED = _auto_state["on"]
+    except: pass
+    if _auto_state["on"]:
+        auto_btn.configure(bg="#28ca42", activebackground="#28ca42", fg="white")
+        q.put("[auto leave] ON - will Esc -> l -> Enter 5s after shutdown.png\n")
+    else:
+        auto_btn.configure(bg="#ff5f57", activebackground="#ff7b74", fg="white")
+        q.put("[auto leave] OFF\n")
+
+auto_btn = tk.Button(title, text="auto leave", bg="#ff5f57", fg="white", activebackground="#ff7b74", activeforeground="white",
+                    relief="flat", bd=0, padx=10, pady=2, font=("SF Mono", 8, "bold"), cursor="hand2", command=_on_auto_leave)
+auto_btn.pack(side="right", padx=6, pady=4)
+
 # Separator
 tk.Frame(outer, bg="#2a2a2a", height=1).pack(fill="x")
 
