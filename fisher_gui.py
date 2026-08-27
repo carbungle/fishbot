@@ -334,6 +334,96 @@ auto_btn = tk.Button(title, text="auto leave", bg="#ff5f57", fg="#cccccc", activ
                     relief="flat", bd=0, padx=10, pady=2, font=("SF Mono", 8), cursor="hand2", command=_on_auto_leave)
 auto_btn.pack(side="right", padx=6, pady=4)
 
+# Map button - beside auto leave, opens map.png with scroll-wheel zoom
+def _open_map():
+    try:
+        import os
+        map_candidates = [
+            os.path.join(HERE, "assets", "map.png"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "map.png"),
+            os.path.join(os.path.expanduser("~"), "Desktop", "map.png"),
+            r"C:\Users\xneas\Desktop\map.png",
+        ]
+        map_path = None
+        for p in map_candidates:
+            if p and os.path.exists(p):
+                map_path = p
+                break
+        if not map_path:
+            q.put("[map] map.png not found (assets/map.png or Desktop/map.png)\n")
+            return
+        # try PIL
+        try:
+            from PIL import Image, ImageTk
+            has_pil = True
+        except:
+            has_pil = False
+        win = tk.Toplevel(root)
+        win.title("map")
+        win.geometry("900x700")
+        win.configure(bg="#1e1e1e")
+        try:
+            win.attributes("-topmost", True)
+        except: pass
+        if has_pil:
+            orig = Image.open(map_path)
+            # keep original, scale factor
+            state = {"scale": 1.0, "orig": orig, "img": None, "id": None}
+            canvas = tk.Canvas(win, bg="#1e1e1e", highlightthickness=0, bd=0)
+            canvas.pack(fill="both", expand=True)
+            # scrollable
+            vsb = tk.Scrollbar(canvas, orient="vertical", command=canvas.yview)
+            hsb = tk.Scrollbar(canvas, orient="horizontal", command=canvas.xview)
+            canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+            def _redraw():
+                w, h = state["orig"].size
+                nw, nh = max(1, int(w * state["scale"])), max(1, int(h * state["scale"]))
+                try:
+                    # Pillow 10+ uses Resampling.LANCZOS
+                    res = getattr(Image, "Resampling", Image).LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+                except:
+                    res = Image.LANCZOS if hasattr(Image, "LANCZOS") else 0
+                resized = state["orig"].resize((nw, nh), res)
+                tkimg = ImageTk.PhotoImage(resized)
+                state["img"] = tkimg  # keep ref
+                canvas.delete("all")
+                canvas.create_image(0, 0, anchor="nw", image=tkimg)
+                canvas.configure(scrollregion=canvas.bbox("all"))
+            def _zoom(e):
+                # Windows: e.delta 120/-120, Linux: Button-4/5
+                if getattr(e, "delta", 0) > 0 or getattr(e, "num", 0) == 4:
+                    state["scale"] = min(5.0, state["scale"] * 1.15)
+                elif getattr(e, "delta", 0) < 0 or getattr(e, "num", 0) == 5:
+                    state["scale"] = max(0.2, state["scale"] * 0.85)
+                else:
+                    return
+                _redraw()
+            # bind scroll
+            canvas.bind("<MouseWheel>", _zoom)
+            canvas.bind("<Button-4>", _zoom)
+            canvas.bind("<Button-5>", _zoom)
+            win.bind("<MouseWheel>", _zoom)
+            _redraw()
+            # drag to pan
+            def _start_pan(e): canvas.scan_mark(e.x, e.y)
+            def _do_pan(e): canvas.scan_dragto(e.x, e.y, gain=1)
+            canvas.bind("<ButtonPress-1>", _start_pan)
+            canvas.bind("<B1-Motion>", _do_pan)
+            q.put(f"[map] opened {os.path.basename(map_path)} - scroll to zoom, drag to pan\n")
+        else:
+            # fallback: show via tk PhotoImage (no smooth zoom)
+            q.put("[map] Pillow not installed, install Pillow for zoom - showing static\n")
+            img = tk.PhotoImage(file=map_path)
+            lbl = tk.Label(win, image=img, bg="#1e1e1e")
+            lbl.image = img
+            lbl.pack(expand=True)
+    except Exception as e:
+        q.put(f"[map error] {e}\n")
+
+map_btn = tk.Button(title, text="map", bg="#2d2d2d", fg="#cccccc", activebackground="#3a3a3a", activeforeground="#ffffff",
+                    relief="flat", bd=0, padx=10, pady=2, font=("SF Mono", 8), cursor="hand2", command=_open_map)
+map_btn.pack(side="right", padx=6, pady=4)
+
 # Separator
 tk.Frame(outer, bg="#2a2a2a", height=1).pack(fill="x")
 
