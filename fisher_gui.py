@@ -325,7 +325,7 @@ def _on_auto_leave():
     except: pass
     if _auto_state["on"]:
         auto_btn.configure(bg="#28ca42", activebackground="#28ca42", fg="white")
-        q.put("[auto leave] ON - will Esc -> l -> Enter 5s after shutdown.png\n")
+        q.put("[auto leave] ON\n")
     else:
         auto_btn.configure(bg="#ff5f57", activebackground="#ff7b74", fg="white")
         q.put("[auto leave] OFF\n")
