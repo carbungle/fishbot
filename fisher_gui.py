@@ -422,14 +422,17 @@ def _open_map():
             state = {"scale": 1.0, "target": 1.0, "orig": orig, "img": None, "anim": False}
             canvas = tk.Canvas(m_body, bg="#1e1e1e", highlightthickness=0, bd=0)
             canvas.pack(fill="both", expand=True)
-            # super smooth zoom via lerp animation
-            def _redraw():
+            # super smooth zoom via lerp animation - fast BILINEAR during motion, LANCZOS on settle
+            def _redraw(fast=False):
                 w, h = state["orig"].size
                 nw, nh = max(1, int(w * state["scale"])), max(1, int(h * state["scale"]))
                 try:
-                    res = getattr(Image, "Resampling", Image).LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+                    if fast:
+                        res = getattr(Image, "Resampling", Image).BILINEAR if hasattr(Image, "Resampling") else Image.BILINEAR
+                    else:
+                        res = getattr(Image, "Resampling", Image).LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
                 except:
-                    res = Image.LANCZOS if hasattr(Image, "LANCZOS") else 0
+                    res = Image.BILINEAR if fast else (Image.LANCZOS if hasattr(Image, "LANCZOS") else 0)
                 resized = state["orig"].resize((nw, nh), res)
                 tkimg = ImageTk.PhotoImage(resized)
                 state["img"] = tkimg
@@ -440,12 +443,12 @@ def _open_map():
                 if abs(state["scale"] - state["target"]) < 0.005:
                     state["scale"] = state["target"]
                     state["anim"] = False
-                    _redraw()
+                    _redraw(fast=False)
                     return
-                # lerp 25% per frame for super smooth
-                state["scale"] += (state["target"] - state["scale"]) * 0.22
-                _redraw()
-                win.after(16, _animate)
+                # lerp 30% per frame for super smooth
+                state["scale"] += (state["target"] - state["scale"]) * 0.30
+                _redraw(fast=True)
+                win.after(12, _animate)
             def _zoom(e):
                 # super smooth small steps, cannot zoom out beyond 1.0 (actual size)
                 if getattr(e, "delta", 0) > 0 or getattr(e, "num", 0) == 4:
