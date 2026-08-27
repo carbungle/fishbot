@@ -324,14 +324,14 @@ def _on_auto_leave():
         _main_al.AUTO_LEAVE_ENABLED = _auto_state["on"]
     except: pass
     if _auto_state["on"]:
-        auto_btn.configure(bg="#28ca42", activebackground="#28ca42", fg="white")
+        auto_btn.configure(bg="#28ca42", activebackground="#2e9e4a", fg="#cccccc")
         q.put("[auto leave] ON\n")
     else:
-        auto_btn.configure(bg="#ff5f57", activebackground="#ff7b74", fg="white")
+        auto_btn.configure(bg="#ff5f57", activebackground="#ff7b74", fg="#cccccc")
         q.put("[auto leave] OFF\n")
 
-auto_btn = tk.Button(title, text="auto leave", bg="#ff5f57", fg="white", activebackground="#ff7b74", activeforeground="white",
-                    relief="flat", bd=0, padx=10, pady=2, font=("SF Mono", 8, "bold"), cursor="hand2", command=_on_auto_leave)
+auto_btn = tk.Button(title, text="auto leave", bg="#ff5f57", fg="#cccccc", activebackground="#ff7b74", activeforeground="#ffffff",
+                    relief="flat", bd=0, padx=10, pady=2, font=("SF Mono", 8), cursor="hand2", command=_on_auto_leave)
 auto_btn.pack(side="right", padx=6, pady=4)
 
 # Separator
