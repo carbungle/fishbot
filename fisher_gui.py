@@ -359,64 +359,132 @@ def _open_map():
         except:
             has_pil = False
         win = tk.Toplevel(root)
-        win.title("map")
-        win.geometry("900x700")
-        win.configure(bg="#1e1e1e")
+        win.overrideredirect(True)
+        win.geometry("900x700+120+120")
+        win.minsize(500, 400)
         try:
             win.attributes("-topmost", True)
-        except: pass
+            win.config(bg="magenta")
+            win.attributes("-transparentcolor", "magenta")
+        except:
+            win.configure(bg=TITLE_BG)
+        # macOS style rounded container for map
+        m_bg = tk.Canvas(win, bg="magenta", highlightthickness=0, bd=0)
+        m_bg.place(x=0, y=0, relwidth=1, relheight=1)
+        m_outer = tk.Frame(m_bg, bg=TITLE_BG)
+        def _m_layout(e=None):
+            try:
+                w, h = win.winfo_width(), win.winfo_height()
+                m_bg.delete("all")
+                if w > 4 and h > 4:
+                    r = 12
+                    m_bg.create_oval(0, 0, 2*r, 2*r, fill=TITLE_BG, outline=TITLE_BG)
+                    m_bg.create_oval(w-2*r, 0, w, 2*r, fill=TITLE_BG, outline=TITLE_BG)
+                    m_bg.create_oval(0, h-2*r, 2*r, h, fill=TITLE_BG, outline=TITLE_BG)
+                    m_bg.create_oval(w-2*r, h-2*r, w, h, fill=TITLE_BG, outline=TITLE_BG)
+                    m_bg.create_rectangle(r, 0, w-r, h, fill=TITLE_BG, outline=TITLE_BG)
+                    m_bg.create_rectangle(0, r, w, h-r, fill=TITLE_BG, outline=TITLE_BG)
+                m_bg.coords("m_outer", 0, 0)
+            except: pass
+        m_bg.create_window(0, 0, anchor="nw", window=m_outer, tags="m_outer")
+        win.bind("<Configure>", _m_layout)
+        m_outer.place(x=6, y=6, relwidth=1, relheight=1, width=-12, height=-12)
+        # title bar
+        m_title = tk.Frame(m_outer, bg=TITLE_BG, height=28)
+        m_title.pack(fill="x", side="top")
+        m_title.pack_propagate(False)
+        def _m_start_drag(e): win._dx, win._dy = e.x, e.y
+        def _m_do_drag(e):
+            try: win.geometry(f"+{win.winfo_x()+e.x-win._dx}+{win.winfo_y()+e.y-win._dy}")
+            except: pass
+        m_title.bind("<Button-1>", _m_start_drag)
+        m_title.bind("<B1-Motion>", _m_do_drag)
+        m_btnf = tk.Frame(m_title, bg=TITLE_BG)
+        m_btnf.pack(side="left", padx=10, pady=6)
+        def _m_dot(col, cmd=None):
+            c = tk.Canvas(m_btnf, width=12, height=12, bg=TITLE_BG, highlightthickness=0)
+            c.create_oval(1,1,11,11, fill=col, outline="")
+            if cmd: c.bind("<Button-1>", lambda e: cmd())
+            c.pack(side="left", padx=3)
+            return c
+        _m_dot(RED, win.destroy)
+        _m_dot(YELLOW)
+        _m_dot(GREEN)
+        tk.Label(m_title, text="map", bg=TITLE_BG, fg="#cfcfcf", font=("SF Mono", 9)).pack(side="left", padx=12)
+        m_title.bind("<Button-1>", _m_start_drag)
+        m_title.bind("<B1-Motion>", _m_do_drag)
+        tk.Frame(m_outer, bg="#2a2a2a", height=1).pack(fill="x")
+        # map content
+        m_body = tk.Frame(m_outer, bg=BG)
+        m_body.pack(fill="both", expand=True)
         if has_pil:
             orig = Image.open(map_path)
-            # keep original, scale factor
-            state = {"scale": 1.0, "orig": orig, "img": None, "id": None}
-            canvas = tk.Canvas(win, bg="#1e1e1e", highlightthickness=0, bd=0)
+            state = {"scale": 1.0, "target": 1.0, "orig": orig, "img": None, "anim": False}
+            canvas = tk.Canvas(m_body, bg="#1e1e1e", highlightthickness=0, bd=0)
             canvas.pack(fill="both", expand=True)
-            # scrollable
-            vsb = tk.Scrollbar(canvas, orient="vertical", command=canvas.yview)
-            hsb = tk.Scrollbar(canvas, orient="horizontal", command=canvas.xview)
-            canvas.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+            # super smooth zoom via lerp animation
             def _redraw():
                 w, h = state["orig"].size
                 nw, nh = max(1, int(w * state["scale"])), max(1, int(h * state["scale"]))
                 try:
-                    # Pillow 10+ uses Resampling.LANCZOS
                     res = getattr(Image, "Resampling", Image).LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
                 except:
                     res = Image.LANCZOS if hasattr(Image, "LANCZOS") else 0
                 resized = state["orig"].resize((nw, nh), res)
                 tkimg = ImageTk.PhotoImage(resized)
-                state["img"] = tkimg  # keep ref
+                state["img"] = tkimg
                 canvas.delete("all")
                 canvas.create_image(0, 0, anchor="nw", image=tkimg)
                 canvas.configure(scrollregion=canvas.bbox("all"))
+            def _animate():
+                if abs(state["scale"] - state["target"]) < 0.005:
+                    state["scale"] = state["target"]
+                    state["anim"] = False
+                    _redraw()
+                    return
+                # lerp 25% per frame for super smooth
+                state["scale"] += (state["target"] - state["scale"]) * 0.22
+                _redraw()
+                win.after(16, _animate)
             def _zoom(e):
-                # Windows: e.delta 120/-120, Linux: Button-4/5
+                # super smooth small steps, cannot zoom out beyond 1.0 (actual size)
                 if getattr(e, "delta", 0) > 0 or getattr(e, "num", 0) == 4:
-                    state["scale"] = min(5.0, state["scale"] * 1.15)
+                    state["target"] = min(4.0, state["target"] * 1.08)
                 elif getattr(e, "delta", 0) < 0 or getattr(e, "num", 0) == 5:
-                    state["scale"] = max(0.2, state["scale"] * 0.85)
+                    state["target"] = max(1.0, state["target"] * 0.92)
                 else:
                     return
-                _redraw()
-            # bind scroll
+                if not state["anim"]:
+                    state["anim"] = True
+                    _animate()
             canvas.bind("<MouseWheel>", _zoom)
             canvas.bind("<Button-4>", _zoom)
             canvas.bind("<Button-5>", _zoom)
             win.bind("<MouseWheel>", _zoom)
             _redraw()
-            # drag to pan
             def _start_pan(e): canvas.scan_mark(e.x, e.y)
             def _do_pan(e): canvas.scan_dragto(e.x, e.y, gain=1)
             canvas.bind("<ButtonPress-1>", _start_pan)
             canvas.bind("<B1-Motion>", _do_pan)
-            q.put(f"[map] opened {os.path.basename(map_path)} - scroll to zoom, drag to pan\n")
+            # resize grip
+            _mgrip = tk.Label(m_outer, text="◢", bg="#3a3a3c", fg="#cccccc", font=("Arial", 10, "bold"), cursor="sizing", bd=0, padx=6, pady=4)
+            _mgrip.place(relx=1.0, rely=1.0, anchor="se", x=-2, y=-1)
+            def _m_start_resize(e): win._rx, win._ry = e.x_root, e.y_root; win._rw, win._rh = win.winfo_width(), win.winfo_height()
+            def _m_do_resize(e):
+                try:
+                    dx, dy = e.x_root-win._rx, e.y_root-win._ry
+                    win.geometry(f"{max(500, win._rw+dx)}x{max(400, win._rh+dy)}")
+                except: pass
+            _mgrip.bind("<Button-1>", _m_start_resize)
+            _mgrip.bind("<B1-Motion>", _m_do_resize)
+            q.put(f"[map] opened {os.path.basename(map_path)} - scroll to zoom (smooth), drag to pan\n")
         else:
             # fallback: show via tk PhotoImage (no smooth zoom)
             q.put("[map] Pillow not installed, install Pillow for zoom - showing static\n")
             img = tk.PhotoImage(file=map_path)
-            lbl = tk.Label(win, image=img, bg="#1e1e1e")
+            lbl = tk.Label(m_body, image=img, bg="#1e1e1e")
             lbl.image = img
-            lbl.pack(expand=True)
+            lbl.pack(expand=True, fill="both")
     except Exception as e:
         q.put(f"[map error] {e}\n")
 
