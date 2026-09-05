@@ -63,13 +63,24 @@ GREEN = "#28ca42"
 RED_HOVER = "#ff7b74"
 
 q = queue.Queue()
+_orig_stdout = sys.stdout
+_orig_stderr = sys.stderr
 
 class GuiWriter:
     def write(self, s):
         if s:
             q.put(s)
+            # also write to original console so input() prompts appear in cmd and don't look lost
+            try:
+                _orig_stdout.write(s)
+                _orig_stdout.flush()
+            except:
+                pass
     def flush(self):
-        pass
+        try:
+            _orig_stdout.flush()
+        except:
+            pass
 
 def pump():
     import re
