@@ -25,7 +25,7 @@ Run:
 
 Controls (pynput global hotkeys):
     F8    - toggle auto-fishing on/off
-    F1    - switch mode: NORMAL (1) / BOX (2, box + maintenance cycle)
+    F1    - switch mode: NORMAL (1) / BOX (2) / AUTOSELL (3)
     ESC   - quit
 """
 
@@ -43,7 +43,7 @@ import numpy as np
 
 import ctypes as _ctypes
 
-VERSION = "27"
+VERSION = "28"
 UPDATE_BASE = "https://raw.githubusercontent.com/carbungle/fishbot/main"
 UPDATE_FILES = ["main.py", "auth.py", "VERSION.txt", "fisher_gui.py", "fisher.bat", "run.bat"]
 AUTO_LEAVE_ENABLED = False
@@ -262,6 +262,10 @@ class Config:
     mode2_hold_seconds: float = 20.0
     mode2_seq_locations: list = field(default_factory=list)  # 7 absolute (x,y)
     mode2_store_locations: list = field(default_factory=list)  # 4 absolute (x,y)
+
+    # --- Mode 3: autosell ------------------------------------------------------
+    # After every catch: press 1, press F, click 3 autosell_locations, press 1, click water
+    autosell_locations: list = field(default_factory=list)  # 3 absolute (x,y)
 
     # --- Debug --------------------------------------------------------------
     preview: bool = False
@@ -804,8 +808,15 @@ class AutoFisher:
             if getattr(self, "_last_f1", 0.0) and now - self._last_f1 < 0.5:
                 return name  # debounce
             self._last_f1 = now
-            self.mode = "box" if self.mode != "box" else "normal"
-            _info("Mode: %s" % ("BOX (2)" if self.mode == "box" else "NORMAL (1)"))
+            # cycle: normal -> box -> autosell -> normal
+            if self.mode == "normal":
+                self.mode = "box"
+            elif self.mode == "box":
+                self.mode = "autosell"
+            else:
+                self.mode = "normal"
+            label = {"normal": "NORMAL (1)", "box": "BOX (2)", "autosell": "AUTOSELL (3)"}[self.mode]
+            _info("Mode: %s" % label)
             return name
         if name == "f8":
             now = time.time()
@@ -823,7 +834,7 @@ class AutoFisher:
                 self.menu_det.reset()
                 self.watcher.reset()
                 self.color_watcher.reset()
-                _running_msg("RUNNING (%s)" % ("MODE 2" if self.mode == "box" else "MODE 1"))
+                _running_msg("RUNNING (%s)" % ({"normal": "MODE 1", "box": "MODE 2", "autosell": "MODE 3"}[self.mode]))
             else:
                 self.state = "idle"
                 self.menu_frames = 0
@@ -997,6 +1008,14 @@ class AutoFisher:
                 # Maintenance ends with the throw-box + press 1 + click, and
                 # that final click already continues fishing, so do not cast
                 # again on top of it.
+                self.total_caught += 1
+                if not self.cfg.demo:
+                    save_total_caught(self.total_caught)
+                self._mode2_enter_waiting()
+                return
+        elif self.mode == "autosell":
+            if self.cfg.autosell_locations and len(self.cfg.autosell_locations) >= 3:
+                self._run_autosell()
                 self.total_caught += 1
                 if not self.cfg.demo:
                     save_total_caught(self.total_caught)
@@ -1196,6 +1215,33 @@ class AutoFisher:
             self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
             time.sleep(0.05)
 
+    def _run_autosell(self):
+        """Autosell: press 1, press F, click 3 locations, press 1, click water again"""
+        locs = list(self.cfg.autosell_locations)
+        if len(locs) < 3:
+            print("Autosell skipped (need 3 locations, run --set-autosell)")
+            return
+        print("Autosell: 1 -> F + 3 spots -> 1 -> click water")
+        self.mouse.press_key("1")
+        time.sleep(0.3)
+        self.mouse.press_key("f")
+        time.sleep(0.3)
+        import autoit as _ai3
+        for x, y in locs[:3]:
+            self.mouse.move_to(int(x), int(y), speed=5)
+            time.sleep(0.05)
+            _ai3.mouse_click("left")
+            time.sleep(0.08)
+        self.mouse.press_key("1")
+        time.sleep(0.3)
+        if self.water_spot is not None:
+            self.mouse.move_to(int(self.water_spot[0]), int(self.water_spot[1]), speed=5)
+            time.sleep(0.05)
+        self.mouse.click_pos()
+        time.sleep(0.2)
+        time.sleep(2.0)
+        self._scan_shutdown()
+
 
 # ---------------------------------------------------------------------------
 # Calibration helpers
@@ -1282,6 +1328,17 @@ def calibrate_seq2_store_locations() -> list:
     return locs
 
 
+def calibrate_autosell_locations() -> list:
+    """Click 3 absolute screen locations for autosell: after pressing F, click 3 spots."""
+    pts = _click_points(3, [
+        "Click AUTOSELL LOCATION 1 (first spot after pressing F).",
+        "Click AUTOSELL LOCATION 2 (second spot).",
+        "Click AUTOSELL LOCATION 3 (third spot)."])
+    locs = [(int(x), int(y)) for (x, y) in pts]
+    print(f"  Autosell locations saved: {locs}")
+    return locs
+
+
 def calibrate_text(cfg: Config) -> Tuple[int, int, int, int]:
     (x0, y0), (x1, y1) = _click_points(
         2, ["Click the TOP-LEFT corner of the status TEXT on the menu.",
@@ -1327,6 +1384,7 @@ def save_config(cfg: Config, path: str):
             "seq_locations": cfg.seq_locations,
             "mode2_seq_locations": cfg.mode2_seq_locations,
             "mode2_store_locations": cfg.mode2_store_locations,
+            "autosell_locations": cfg.autosell_locations,
             "text_ref_images": cfg.text_ref_images}
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
@@ -1354,6 +1412,8 @@ def load_config(cfg: Config, path: str):
             if data.get("mode2_seq_locations") else []
         cfg.mode2_store_locations = [tuple(l) for l in data["mode2_store_locations"]] \
             if data.get("mode2_store_locations") else []
+        cfg.autosell_locations = [tuple(l) for l in data["autosell_locations"]] \
+            if data.get("autosell_locations") else []
         cfg.text_ref_images = data.get("text_ref_images") or {}
     except Exception as ex:
         print("Could not read cfg:", ex)
@@ -1463,6 +1523,8 @@ def main():
                     help="click 7 locations for MODE 2 (6 F-key + 1 T-key)")
     ap.add_argument("--set-seq2-store", action="store_true",
                     help="click 4 locations for MODE 2's trunk store (3 F-key + 1 T-key)")
+    ap.add_argument("--set-autosell", "--set-cal2", dest="set_autosell", action="store_true",
+                    help="click 3 locations for AUTOSELL (cal2) - F+3 spots")
     ap.add_argument("--preview", action="store_true",
                     help="open a live preview window showing detected targets")
     ap.add_argument("--demo", action="store_true",
@@ -1520,6 +1582,11 @@ def main():
         cfg.mode2_store_locations = calibrate_seq2_store_locations()
         save_config(cfg, args.cfg)
         print(f"Mode-2 store locations saved to {args.cfg}")
+        return
+    if args.set_autosell:
+        cfg.autosell_locations = calibrate_autosell_locations()
+        save_config(cfg, args.cfg)
+        print(f"Autosell locations saved to {args.cfg}")
         return
 
     if args.snap_text:
