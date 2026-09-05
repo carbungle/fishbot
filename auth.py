@@ -283,56 +283,6 @@ def _masked_hw() -> str:
 def _is_owner_pc() -> bool:
     return _masked_hw() == _OWNER_HW
 
-def _gui_prompt(prompt: str) -> str:
-    try:
-        if sys.stdin and sys.stdin.isatty():
-            return input(prompt).strip()
-    except:
-        pass
-    try:
-        import tkinter as tk
-        from tkinter import simpledialog
-        r = tk._default_root
-        created = False
-        if r is None or not r.winfo_exists():
-            r = tk.Tk()
-            r.withdraw()
-            created = True
-            try: r.attributes("-topmost", True)
-            except: pass
-        res = {"val": None}
-        def _ask():
-            try: res["val"] = simpledialog.askstring("Login", prompt, parent=r)
-            except: res["val"] = None
-        try:
-            import threading
-            if threading.current_thread() is threading.main_thread():
-                _ask()
-            else:
-                done = threading.Event()
-                def _wrap():
-                    _ask()
-                    done.set()
-                r.after(0, _wrap)
-                done.wait(timeout=120)
-        except:
-            _ask()
-        if created:
-            try: r.destroy()
-            except: pass
-        return (res["val"] or "").strip()
-    except:
-        return ""
-
-def _gui_pass_prompt(prompt: str) -> str:
-    try:
-        if sys.stdin and sys.stdin.isatty():
-            return _pass_prompt(prompt)
-    except:
-        pass
-    # fallback to visible dialog (not masked)
-    return _gui_prompt(prompt)
-
 
 def login():
     records = _load()
@@ -365,19 +315,10 @@ def login():
 
     while True:
         try:
-            # gui fallback if stdin lost (pythonw / fisher_gui)
-            if sys.stdin is None or not sys.stdin.isatty() or "fisher_gui" in sys.modules:
-                name = _gui_prompt("? ")
-            else:
-                name = input("? ").strip()
-        except (EOFError, KeyboardInterrupt, OSError, ValueError):
-            try:
-                name = _gui_prompt("? ")
-            except:
-                print()
-                return None
-            if not name:
-                return None
+            name = input("? ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
         if not name:
             continue
         rec = _find_user(name, records)
@@ -386,16 +327,10 @@ def login():
             continue
         while True:
             try:
-                if sys.stdin is None or not sys.stdin.isatty() or "fisher_gui" in sys.modules:
-                    pw = _gui_prompt("?? ")
-                else:
-                    pw = _pass_prompt("?? ")
-            except (EOFError, KeyboardInterrupt, OSError, ValueError):
-                try:
-                    pw = _gui_prompt("?? ")
-                except:
-                    print()
-                    return None
+                pw = _pass_prompt("?? ")
+            except (EOFError, KeyboardInterrupt):
+                print()
+                return None
             if _password_ok(rec, pw):
                 break
             print("Try again.")
